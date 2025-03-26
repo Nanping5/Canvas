@@ -33,6 +33,26 @@ void CanvasWidget::setLineStyle(Qt::PenStyle style) {
 void CanvasWidget::paintEvent(QPaintEvent *event) {
     QPainter painter(this);
     painter.drawImage(0, 0, canvasImage);
+    
+    // 绘制实时预览
+    if (drawing && drawingMode != 0) {
+        QColor previewColor = penColor;
+        previewColor.setAlpha(128);  // 50%透明度
+        painter.setPen(QPen(previewColor, penWidth, lineStyle));
+        painter.setRenderHint(QPainter::Antialiasing);
+
+        switch (drawingMode) {
+        case 1: // 直线预览
+            painter.drawLine(startPoint, currentPoint);
+            break;
+        case 2: { // 圆预览
+            int radius = static_cast<int>(sqrt(pow(currentPoint.x() - startPoint.x(), 2) +
+                                             pow(currentPoint.y() - startPoint.y(), 2)));
+            painter.drawEllipse(startPoint, radius, radius);
+            break;
+        }
+        }
+    }
 }
 
 void CanvasWidget::mousePressEvent(QMouseEvent *event) {
@@ -61,20 +81,31 @@ void CanvasWidget::resizeEvent(QResizeEvent *event) {
 }
 
 void CanvasWidget::mouseMoveEvent(QMouseEvent *event) {
-    if (drawing && drawingMode == 0) {
-        QPainter painter(&canvasImage);
-        painter.setRenderHint(QPainter::Antialiasing, true);  // 抗锯齿
-        QPen pen(penColor, penWidth, lineStyle, Qt::RoundCap, Qt::RoundJoin);
-        painter.setPen(pen);
+    if (drawing) {
+        currentPoint = event->pos();  // 始终更新当前点坐标
+        
+        if (drawingMode == 0) {
+            QPainter painter(&canvasImage);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            QPen pen(penColor, penWidth, lineStyle, Qt::RoundCap, Qt::RoundJoin);
+            if(lineStyle != Qt::SolidLine) {
+                QList<qreal> dashPattern = {5, 5};
+                if(lineStyle == Qt::DotLine) dashPattern[0] = 1, dashPattern[1] = 5;
+                pen.setDashPattern(dashPattern);
+            }
+            painter.setPen(pen);
 
-        // 使用 QPainterPath 来提高虚线的可见性
-        QPainterPath path;
-        path.moveTo(startPoint);
-        path.lineTo(event->pos());
-        painter.drawPath(path);
+            // 提高虚线的可见性
+            QPainterPath path;
+            path.moveTo(startPoint);
+            path.lineTo(event->pos());
+            painter.drawPath(path);
 
-        startPoint = event->pos();
-        update();
+            startPoint = event->pos();
+            update();
+        } else {
+            update();
+        }
     }
 }
 
@@ -86,6 +117,8 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
     if (drawing) {
         drawing = false;
         endPoint = event->pos();
+        currentPoint = endPoint;  // 同步最终坐标
+        
         QPainter painter(&canvasImage);
         painter.setRenderHint(QPainter::Antialiasing, true);
         QPen pen(penColor, penWidth, lineStyle);
@@ -112,11 +145,28 @@ void CanvasWidget::drawBresenhamLine(QPainter &painter, QPoint p1, QPoint p2) {
     int sx = (x1 < x2) ? 1 : -1, sy = (y1 < y2) ? 1 : -1;
     int err = dx - dy;
 
-    QPen pen(penColor, penWidth, lineStyle);
-    painter.setPen(pen);
+    QPen solidPen(penColor, penWidth);  // 使用实线绘制单个点
+    painter.setPen(solidPen);
+
+    int dashCounter = 0;
+    bool drawPixel = true;
+    int dashLength = (lineStyle == Qt::DotLine) ? 2 : 5;  // 点线间隔更短
 
     while (true) {
-        painter.drawPoint(x1, y1);
+        if(lineStyle != Qt::SolidLine) {
+            if(dashCounter % (dashLength*2) < dashLength) {
+                drawPixel = true;
+                if(lineStyle == Qt::DotLine) drawPixel = (dashCounter % 4 < 2);  // 点线模式
+            } else {
+                drawPixel = false;
+            }
+        }
+        
+        if(drawPixel) {
+            painter.drawPoint(x1, y1);
+        }
+        dashCounter++;
+
         if (x1 == x2 && y1 == y2) break;
         int e2 = err * 2;
         if (e2 > -dy) { err -= dy; x1 += sx; }
@@ -125,20 +175,37 @@ void CanvasWidget::drawBresenhamLine(QPainter &painter, QPoint p1, QPoint p2) {
 }
 
 void CanvasWidget::drawMidpointArc(QPainter &painter, QPoint center, int radius, int, int) {
+    QPen solidPen(penColor, penWidth);
+    painter.setPen(solidPen);
+    int dashCounter = 0;
+    const int dashLength = (lineStyle == Qt::DotLine) ? 2 : 5;
+
     int x = radius;
     int y = 0;
     int p = 1 - radius;
 
     while (x >= y) {
-        // 绘制八个对称点
-        painter.drawPoint(center.x() + x, center.y() - y);
-        painter.drawPoint(center.x() + y, center.y() - x);
-        painter.drawPoint(center.x() - y, center.y() - x);
-        painter.drawPoint(center.x() - x, center.y() - y);
-        painter.drawPoint(center.x() - x, center.y() + y);
-        painter.drawPoint(center.x() - y, center.y() + x);
-        painter.drawPoint(center.x() + y, center.y() + x);
-        painter.drawPoint(center.x() + x, center.y() + y);
+        bool drawPixel = true;
+        if(lineStyle != Qt::SolidLine) {
+            if(dashCounter % (dashLength*2) >= dashLength) {
+                drawPixel = false;
+            }
+            if(lineStyle == Qt::DotLine && dashCounter % 4 >= 2) {
+                drawPixel = false;
+            }
+        }
+        dashCounter++;
+        
+        if(drawPixel) {
+            painter.drawPoint(center.x() + x, center.y() - y);
+            painter.drawPoint(center.x() + y, center.y() - x);
+            painter.drawPoint(center.x() - y, center.y() - x);
+            painter.drawPoint(center.x() - x, center.y() - y);
+            painter.drawPoint(center.x() - x, center.y() + y);
+            painter.drawPoint(center.x() - y, center.y() + x);
+            painter.drawPoint(center.x() + y, center.y() + x);
+            painter.drawPoint(center.x() + x, center.y() + y);
+        }
 
         y++;
         if (p <= 0) {

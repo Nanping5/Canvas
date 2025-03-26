@@ -43,7 +43,7 @@ void MainWindow::setupUI() {
     modeComboBox->addItem("圆弧");
     connect(modeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setDrawingMode);
 
-    // 线型选择框（修正 QVariant::fromValue 传递方式）
+    // 线型选择框
     lineStyleComboBox = new QComboBox(this);
     lineStyleComboBox->addItem("实线", QVariant::fromValue(Qt::SolidLine));
     lineStyleComboBox->addItem("虚线", QVariant::fromValue(Qt::DashLine));
@@ -57,7 +57,7 @@ void MainWindow::setupUI() {
     toolBar->addWidget(clearButton);
     toolBar->addWidget(penWidthButton);
     toolBar->addWidget(modeComboBox);
-    toolBar->addWidget(lineStyleComboBox);  // 确保 lineStyleComboBox 被正确初始化！
+    toolBar->addWidget(lineStyleComboBox);
 }
 
 void MainWindow::applyStyleSheet() {

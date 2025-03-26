@@ -28,7 +28,7 @@ private:
     QColor penColor;
     int penWidth;
     bool drawing;
-    QPoint startPoint, endPoint;
+    QPoint startPoint, endPoint, currentPoint;
     int drawingMode;  // 0: 自由绘制, 1: 直线, 2: 圆弧
     Qt::PenStyle lineStyle = Qt::SolidLine;
 

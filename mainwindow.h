@@ -20,6 +20,7 @@ private slots:
     void setPenWidth();
     void setDrawingMode(int index);
     void setLineStyle(int index);
+    void selectEraser();
 private:
     CanvasWidget *canvas;
     QPushButton *colorButton;
@@ -27,6 +28,7 @@ private:
     QPushButton *penWidthButton;
     QComboBox *modeComboBox;
     QComboBox *lineStyleComboBox;
+    QPushButton *eraserButton;
 
     void setupUI();  // 初始化 UI
     void applyStyleSheet();  // 设置样式

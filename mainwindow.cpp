@@ -40,7 +40,7 @@ void MainWindow::setupUI() {
     modeComboBox = new QComboBox(this);
     modeComboBox->addItem("自由绘制");
     modeComboBox->addItem("直线");
-    modeComboBox->addItem("圆弧");
+    modeComboBox->addItem("圆");
     connect(modeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setDrawingMode);
 
     // 线型选择框
@@ -52,12 +52,17 @@ void MainWindow::setupUI() {
 
     connect(lineStyleComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setLineStyle);
 
+    // 创建橡皮擦按钮
+    eraserButton = new QPushButton("🧽 橡皮擦", this);
+    connect(eraserButton, &QPushButton::clicked, this, &MainWindow::selectEraser);
+
     // 添加到工具栏
     toolBar->addWidget(colorButton);
     toolBar->addWidget(clearButton);
     toolBar->addWidget(penWidthButton);
     toolBar->addWidget(modeComboBox);
     toolBar->addWidget(lineStyleComboBox);
+    toolBar->addWidget(eraserButton);
 }
 
 void MainWindow::applyStyleSheet() {
@@ -67,13 +72,13 @@ void MainWindow::applyStyleSheet() {
         }
 
         QToolBar {
-            background-color: #edf6f7;
-            padding: 8px;
-            border-bottom: 2px solid #88C0D0;
+            background-color: #E0E0E0;
+            padding: 5px;
+            border-bottom: 2px solid #A0A0A0;
         }
 
         QPushButton {
-            background-color: #808080;
+            background-color: #A0A0A0;
             color: white;
             font-size: 16px;
             border-radius: 8px;
@@ -85,10 +90,11 @@ void MainWindow::applyStyleSheet() {
         }
 
         QComboBox {
-            background-color: #808080;
+            background-color: #A0A0A0;
+            color: white;
             font-size: 16px;
-            padding: 6px;
-            border-radius: 5px;
+            padding: 8px 16px;
+            border-radius: 8px;
         }
 
         QComboBox:hover {
@@ -128,5 +134,14 @@ void MainWindow::setLineStyle(int index) {
 
 void MainWindow::setDrawingMode(int index) {
     canvas->setDrawingMode(index);
+}
+
+void MainWindow::selectEraser() {
+    bool ok;
+    int width = QInputDialog::getInt(this, "设置橡皮擦粗细", "粗细:", 6, 1, 20, 1, &ok);
+    if (ok) {
+        canvas->setDrawingMode(3);  // 设置为橡皮擦模式
+        canvas->setPenWidth(width);
+    }
 }
 

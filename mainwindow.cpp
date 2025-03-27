@@ -144,4 +144,3 @@ void MainWindow::selectEraser() {
         canvas->setPenWidth(width);
     }
 }
-

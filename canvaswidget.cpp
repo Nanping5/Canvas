@@ -84,6 +84,7 @@ void CanvasWidget::paintEvent(QPaintEvent *event) {
     // 应用变换
     painter.translate(m_zoomOffset);
     painter.scale(m_zoomFactor, m_zoomFactor);
+    painter.translate(-m_canvasOffset); // 移动到画布坐标系
     
     // 绘制画布
     painter.drawImage(m_canvasOffset, canvasImage);
@@ -91,7 +92,7 @@ void CanvasWidget::paintEvent(QPaintEvent *event) {
     // 绘制实时预览
     if (drawing) {
         QColor previewColor;
-        float scaledWidth = penWidth / m_zoomFactor; // 根据缩放调整画笔宽度
+        float scaledWidth = penWidth * m_zoomFactor;
         
         if (drawingMode == 3) {
             previewColor = Qt::gray;
@@ -102,19 +103,22 @@ void CanvasWidget::paintEvent(QPaintEvent *event) {
         painter.setPen(QPen(previewColor, scaledWidth, Qt::SolidLine));
         painter.setRenderHint(QPainter::Antialiasing);
 
+        // 在画布坐标系中绘制预览
         switch (drawingMode) {
         case 1: // 直线预览
-            painter.drawLine(startPoint, currentPoint);
+            painter.drawLine(startPoint - m_canvasOffset, currentPoint - m_canvasOffset);
             break;
         case 2: { // 圆预览
-            int radius = static_cast<int>(sqrt(pow(currentPoint.x() - startPoint.x(), 2) +
-                                             pow(currentPoint.y() - startPoint.y(), 2)));
-            painter.drawEllipse(startPoint, radius, radius);
+            QPoint adjustedStart = startPoint - m_canvasOffset;
+            QPoint adjustedCurrent = currentPoint - m_canvasOffset;
+            int radius = static_cast<int>(sqrt(pow(adjustedCurrent.x() - adjustedStart.x(), 2) +
+                                             pow(adjustedCurrent.y() - adjustedStart.y(), 2)));
+            painter.drawEllipse(adjustedStart, radius, radius);
             break;
         }
         case 3: // 橡皮擦预览
             painter.setBrush(Qt::NoBrush);
-            painter.drawEllipse(currentPoint, scaledWidth/2, scaledWidth/2);
+            painter.drawEllipse(QPointF(currentPoint - m_canvasOffset), scaledWidth/2, scaledWidth/2);
             break;
         }
     }
@@ -163,29 +167,24 @@ void CanvasWidget::resizeEvent(QResizeEvent *event) {
 
 void CanvasWidget::mouseMoveEvent(QMouseEvent *event) {
     if (event->buttons() & Qt::MiddleButton) {
-        // 使用视图坐标系进行拖动，避免频繁重新计算画布
         QPoint delta = event->pos() - m_lastDragPos;
         m_zoomOffset += delta;
         m_lastDragPos = event->pos();
-        
-        // 使用更新区域而不是整个窗口
-        QRect updateRect = rect();
-        update(updateRect);
+        update();
         event->accept();
         return;
     }
     
-    QPointF imagePos = mapToImage(event->pos());
-    currentPoint = imagePos.toPoint();
-    
     if (drawing) {
+        QPointF imagePos = mapToImage(event->pos());
+        currentPoint = imagePos.toPoint();
+        
         if (drawingMode == 0) { // 自由绘制模式
             QPainter painter(&canvasImage);
             painter.setRenderHint(QPainter::Antialiasing);
             
-            // 使用实际画笔宽度（不需要缩放补偿）
+            // 使用原始画笔宽度
             QPen pen(penColor, penWidth, lineStyle, Qt::RoundCap, Qt::RoundJoin);
-            
             if(lineStyle != Qt::SolidLine) {
                 QList<qreal> dashPattern = {5, 5};
                 if(lineStyle == Qt::DotLine) dashPattern[0] = 1, dashPattern[1] = 5;
@@ -195,15 +194,15 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent *event) {
             painter.setPen(pen);
             painter.drawLine(startPoint - m_canvasOffset, currentPoint - m_canvasOffset);
             startPoint = currentPoint;
-            update();
         }
         else if (drawingMode == 3) { // 橡皮擦模式
             QPainter painter(&canvasImage);
+            // 使用原始画笔宽度
             painter.setPen(QPen(backgroundColor, penWidth, Qt::SolidLine, Qt::RoundCap));
             painter.drawLine(startPoint - m_canvasOffset, currentPoint - m_canvasOffset);
             startPoint = currentPoint;
-            update();
         }
+        update();
     }
 }
 
@@ -214,7 +213,7 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
     } else {
         if (drawing) {
             drawing = false;
-            // 转换坐标到缩放后的画布
+            // 转换坐标到画布坐标系
             QPointF imagePos = mapToImage(event->pos());
             endPoint = imagePos.toPoint();
             
@@ -223,17 +222,17 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
 
             switch (drawingMode) {
             case 1: // 直线
-                drawBresenhamLine(painter, startPoint, endPoint);
+                drawBresenhamLine(painter, startPoint - m_canvasOffset, endPoint - m_canvasOffset);
                 break;
             case 2: { // 圆
                 int radius = static_cast<int>(sqrt(pow(endPoint.x() - startPoint.x(), 2) +
                                                    pow(endPoint.y() - startPoint.y(), 2)));
-                drawMidpointArc(painter, startPoint, radius, 0, 360);
+                drawMidpointArc(painter, startPoint - m_canvasOffset, radius, 0, 360);
                 break;
             }
             case 3: // 橡皮擦
                 painter.setPen(QPen(backgroundColor, penWidth, Qt::SolidLine, Qt::RoundCap));
-                painter.drawLine(startPoint, endPoint);
+                painter.drawLine(startPoint - m_canvasOffset, endPoint - m_canvasOffset);
                 break;
             }
             update();
@@ -242,21 +241,19 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 void CanvasWidget::drawBresenhamLine(QPainter &painter, QPoint p1, QPoint p2) {
+    // 使用原始画笔宽度
+    QPen pen(penColor, penWidth, Qt::SolidLine);
+    painter.setPen(pen);
+    
     // 转换为当前画布坐标系
     p1 -= m_canvasOffset;
     p2 -= m_canvasOffset;
-    
-    // 根据缩放比例调整实际绘制宽度
-    float physicalWidth = qMax(1.0f, penWidth / m_zoomFactor);
-    QPen physicalPen(penColor, physicalWidth);
     
     int x1 = p1.x(), y1 = p1.y();
     int x2 = p2.x(), y2 = p2.y();
     int dx = abs(x2 - x1), dy = abs(y2 - y1);
     int sx = (x1 < x2) ? 1 : -1, sy = (y1 < y2) ? 1 : -1;
     int err = dx - dy;
-
-    painter.setPen(physicalPen);
 
     int dashCounter = 0;
     bool drawPixel = true;
@@ -285,14 +282,13 @@ void CanvasWidget::drawBresenhamLine(QPainter &painter, QPoint p1, QPoint p2) {
 }
 
 void CanvasWidget::drawMidpointArc(QPainter &painter, QPoint center, int radius, int, int) {
+    // 使用原始画笔宽度
+    QPen pen(penColor, penWidth);
+    painter.setPen(pen);
+    
     // 转换为当前画布坐标系
     center -= m_canvasOffset;
     
-    QPen solidPen(penColor, penWidth);
-    painter.setPen(solidPen);
-    int dashCounter = 0;
-    const int dashLength = (lineStyle == Qt::DotLine) ? 2 : 5;
-
     int x = radius;
     int y = 0;
     int p = 1 - radius;
@@ -300,14 +296,10 @@ void CanvasWidget::drawMidpointArc(QPainter &painter, QPoint center, int radius,
     while (x >= y) {
         bool drawPixel = true;
         if(lineStyle != Qt::SolidLine) {
-            if(dashCounter % (dashLength*2) >= dashLength) {
-                drawPixel = false;
-            }
-            if(lineStyle == Qt::DotLine && dashCounter % 4 >= 2) {
+            if(lineStyle == Qt::DotLine && lineStyle == Qt::DotLine) {
                 drawPixel = false;
             }
         }
-        dashCounter++;
         
         if(drawPixel) {
             painter.drawPoint(center.x() + x, center.y() - y);

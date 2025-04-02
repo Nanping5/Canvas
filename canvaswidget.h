@@ -9,15 +9,19 @@ class CanvasWidget : public QWidget {
     Q_OBJECT
 
 public:
+    enum Connectivity { FourWay, EightWay };
     explicit CanvasWidget(QWidget *parent = nullptr);
     void setPenColor(QColor color);
     void setPenWidth(int width);
     void clearCanvas();
     void setDrawingMode(int mode);
     void setLineStyle(Qt::PenStyle style);
+    void setFillConnectivity(Connectivity conn);
     double zoomFactor() const { return m_zoomFactor; }
     void setZoom(double factor);
     void resetZoom();
+    QPoint mapToCanvas(const QPoint& pos) const;
+    QPoint mapFromCanvas(const QPoint& canvasPos) const;
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -33,18 +37,22 @@ private:
     int penWidth;
     bool drawing;
     QPoint startPoint, endPoint, currentPoint;
-    int drawingMode;  // 0: 自由绘制, 1: 直线, 2: 圆弧
+    int drawingMode;  // 0:自由绘制,1:直线,2:圆,3:橡皮擦,4:多边形,5:填充
     Qt::PenStyle lineStyle = Qt::SolidLine;
-    QColor backgroundColor;  // 用于存储画布的背景色
-    double m_zoomFactor = 1.0;     // 原zoomFactor
-    QPointF m_zoomOffset;          // 原zoomOffset
-    QPoint m_lastDragPos;          // 原lastDragPos
-    QPoint m_canvasOffset; // 新增画布偏移量
+    QColor backgroundColor;
+    double m_zoomFactor = 1.0;
+    QPointF m_zoomOffset;
+    QPoint m_lastDragPos;
+    QPoint m_canvasOffset;
+    QVector<QPoint> polygonPoints;
+    bool isFirstEdge;
+    QPoint firstVertex;
+    const int CLOSE_DISTANCE = 20;
+    Connectivity fillConnectivity = EightWay;
+    void floodFill(QPoint seedPoint);  // 函数声明
 
-    // 坐标转换方法
     QPointF mapToImage(const QPoint& pos) const;
-    QPointF mapFromImage(const QPointF& imagePos) const;  // 新增
-
+    QPointF mapFromImage(const QPointF& imagePos) const;
     void drawBresenhamLine(QPainter &painter, QPoint p1, QPoint p2);
     void drawMidpointArc(QPainter &painter, QPoint center, int radius, int startAngle, int endAngle);
 };

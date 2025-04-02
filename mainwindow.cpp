@@ -41,6 +41,7 @@ void MainWindow::setupUI() {
     modeComboBox->addItem("自由绘制");
     modeComboBox->addItem("直线");
     modeComboBox->addItem("圆");
+    modeComboBox->addItem("多边形");
     connect(modeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setDrawingMode);
 
     // 线型选择框
@@ -56,6 +57,14 @@ void MainWindow::setupUI() {
     eraserButton = new QPushButton("🧽 橡皮擦", this);
     connect(eraserButton, &QPushButton::clicked, this, &MainWindow::selectEraser);
 
+    // 添加填充按钮
+    QPushButton *fillButton = new QPushButton("🪣 填充", this);
+    fillButton->setCheckable(true);
+    fillButton->setAutoExclusive(true);
+    connect(fillButton, &QPushButton::toggled, this, [this](bool checked) {
+        canvas->setDrawingMode(checked ? 5 : -1);  // 切换模式
+    });
+
     // 添加到工具栏
     toolBar->addWidget(colorButton);
     toolBar->addWidget(clearButton);
@@ -63,6 +72,7 @@ void MainWindow::setupUI() {
     toolBar->addWidget(modeComboBox);
     toolBar->addWidget(lineStyleComboBox);
     toolBar->addWidget(eraserButton);
+    toolBar->addWidget(fillButton);
 }
 
 void MainWindow::applyStyleSheet() {
@@ -100,6 +110,25 @@ void MainWindow::applyStyleSheet() {
         QComboBox:hover {
             background-color: #81A1C1;
         }
+
+        QPushButton[text="🪣 填充"] {
+            background-color: #88C0D0;
+            border: 2px solid #5E81AC;
+            color: #2E3440;
+        }
+        QPushButton[text="🪣 填充"]:hover {
+            background-color: #81A1C1;
+            border-color: #4C6793;
+        }
+        QPushButton[text="🪣 填充"]:checked {
+            background-color: #5E81AC;
+            border-color: #4C6793;
+            color: white;
+        }
+        QPushButton[text="🪣 填充"]:disabled {
+            background-color: #D8DEE9;
+            color: #999999;
+        }
     )");
 }
 
@@ -133,7 +162,10 @@ void MainWindow::setLineStyle(int index) {
 
 
 void MainWindow::setDrawingMode(int index) {
-    canvas->setDrawingMode(index);
+    int modeMap[] = {0, 1, 2, 4}; // 索引对应模式：0,1,2,4
+    if (index >= 0 && index < 4) {
+        canvas->setDrawingMode(modeMap[index]);
+    }
 }
 
 void MainWindow::selectEraser() {

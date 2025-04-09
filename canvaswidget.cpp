@@ -2,6 +2,7 @@
 #include <QPainterPath>
 #include<cmath>
 #include <QQueue>
+#include <QStack>
 
 CanvasWidget::CanvasWidget(QWidget *parent) : QWidget(parent), penColor(Qt::black), penWidth(2), drawing(false), drawingMode(0) {
     canvasImage = QImage(1440, 1024, QImage::Format_ARGB32);
@@ -105,6 +106,18 @@ void CanvasWidget::paintEvent(QPaintEvent *event) {
             break;
         }
     }
+    
+    // 绘制裁剪框
+    if (isDraggingClipRect || !clipRect.isNull()) {
+        painter.setPen(QPen(Qt::red, 2, Qt::DashLine));
+        painter.drawRect(clipRect);
+    }
+    
+    // 绘制裁剪后的线段
+    painter.setPen(QPen(Qt::blue, 2));
+    foreach (QLine line, clippedLines) {
+        painter.drawLine(line);
+    }
 }
 
 QPointF CanvasWidget::mapToImage(const QPoint& pos) const {
@@ -170,6 +183,16 @@ void CanvasWidget::mousePressEvent(QMouseEvent *event) {
             polygonPoints.clear();
             update();
         }
+    } else if (drawingMode == 6) { // 裁剪模式
+        if (event->button() == Qt::LeftButton) {
+            isDraggingClipRect = true;
+            clipStartPoint = mapToImage(event->pos()).toPoint();
+            clipRect.setTopLeft(clipStartPoint);
+            clipRect.setBottomRight(clipStartPoint);
+        } else if (event->button() == Qt::RightButton) {
+            clipWindow.setBottomRight(mapToImage(event->pos()).toPoint());
+            processClipping();
+        }
     } else {
         QPointF imagePos = mapToImage(event->pos());
         startPoint = imagePos.toPoint();
@@ -204,6 +227,10 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent *event) {
         update();
         event->accept();
         return;
+    } else if (isDraggingClipRect && drawingMode == 6) { // 裁剪模式
+        QPoint currentPoint = mapToImage(event->pos()).toPoint();
+        clipRect.setBottomRight(currentPoint);
+        update(); // 触发重绘
     } else if (drawing) {  // 处理所有绘制模式的移动
         QPointF imagePos = mapToImage(event->pos());
         currentPoint = imagePos.toPoint();
@@ -245,6 +272,14 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::MiddleButton) {
         setCursor(Qt::ArrowCursor);
         event->accept();
+    } else if (event->button() == Qt::LeftButton && isDraggingClipRect && drawingMode == 6) { // 裁剪模式
+        isDraggingClipRect = false;
+        QPoint endPoint = mapToImage(event->pos()).toPoint();
+        clipRect.setBottomRight(endPoint);
+
+        // 执行裁剪
+        processClipping();
+        update(); // 触发重绘
     } else if (drawingMode == 4 && event->button() == Qt::LeftButton) {
         // 检查是否接近第一个顶点
         if (QLineF(currentPoint, firstVertex).length() < CLOSE_DISTANCE && 
@@ -272,7 +307,11 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
 
                 switch (drawingMode) {
                 case 1: // 直线
-                    drawBresenhamLine(painter, startPoint - m_canvasOffset, endPoint - m_canvasOffset);
+                    if (lineAlgorithm == Bresenham) {
+                        drawBresenhamLine(painter, startPoint - m_canvasOffset, endPoint - m_canvasOffset);
+                    } else if (lineAlgorithm == Midpoint) {
+                        drawMidpointLine(painter, startPoint - m_canvasOffset, endPoint - m_canvasOffset);
+                    }
                     break;
                 case 2: { // 圆
                     int radius = static_cast<int>(sqrt(pow(endPoint.x() - startPoint.x(), 2) +
@@ -453,4 +492,163 @@ void CanvasWidget::floodFill(QPoint seedPoint) {
 
 void CanvasWidget::setFillConnectivity(Connectivity conn) {
     fillConnectivity = conn;
+}
+
+enum ClipAlgorithm { CohenSutherland, MidpointSubdivision };
+void CanvasWidget::setClipAlgorithm(ClipAlgorithm algo) { 
+    clipAlgorithm = algo; 
+}
+
+QRect clipWindow; // 裁剪窗口
+ClipAlgorithm clipAlgorithm = CohenSutherland;
+QVector<QLine> clippedLines; // 存储裁剪后的线段
+
+// Cohen-Sutherland算法的区域编码
+const int INSIDE = 0; // 0000
+const int LEFT = 1;   // 0001
+const int RIGHT = 2;  // 0010
+const int BOTTOM = 4; // 0100
+const int TOP = 8;    // 1000
+
+int CanvasWidget::computeOutCode(const QPoint &p) const {
+    int code = INSIDE;
+    
+    if (p.x() < clipRect.left()) code |= LEFT;
+    else if (p.x() > clipRect.right()) code |= RIGHT;
+    if (p.y() < clipRect.top()) code |= TOP;
+    else if (p.y() > clipRect.bottom()) code |= BOTTOM;
+    
+    return code;
+}
+
+bool CanvasWidget::cohenSutherlandClip(QLine &line) {
+    QPoint p1 = line.p1();
+    QPoint p2 = line.p2();
+    
+    int outcode1 = computeOutCode(p1);
+    int outcode2 = computeOutCode(p2);
+    bool accept = false;
+
+    while (true) {
+        if (!(outcode1 | outcode2)) { // 完全在窗口内
+            accept = true;
+            break;
+        } else if (outcode1 & outcode2) { // 完全在窗口外
+            break;
+        } else {
+            QPoint p;
+            int outcodeOut = outcode1 ? outcode1 : outcode2;
+
+            if (outcodeOut & TOP) {
+                p.setX(p1.x() + (p2.x() - p1.x()) * (clipWindow.top() - p1.y()) / (p2.y() - p1.y()));
+                p.setY(clipWindow.top());
+            } else if (outcodeOut & BOTTOM) {
+                p.setX(p1.x() + (p2.x() - p1.x()) * (clipWindow.bottom() - p1.y()) / (p2.y() - p1.y()));
+                p.setY(clipWindow.bottom());
+            } else if (outcodeOut & RIGHT) {
+                p.setY(p1.y() + (p2.y() - p1.y()) * (clipWindow.right() - p1.x()) / (p2.x() - p1.x()));
+                p.setX(clipWindow.right());
+            } else if (outcodeOut & LEFT) {
+                p.setY(p1.y() + (p2.y() - p1.y()) * (clipWindow.left() - p1.x()) / (p2.x() - p1.x()));
+                p.setX(clipWindow.left());
+            }
+
+            if (outcodeOut == outcode1) {
+                p1 = p;
+                outcode1 = computeOutCode(p1);
+            } else {
+                p2 = p;
+                outcode2 = computeOutCode(p2);
+            }
+        }
+    }
+    if (accept) {
+        line.setP1(p1);
+        line.setP2(p2);
+    }
+    return accept;
+}
+
+void CanvasWidget::midpointSubdivisionClip(QLine line) {
+    QStack<QLine> stack;
+    stack.push(line);
+    
+    while (!stack.isEmpty()) {
+        QLine current = stack.pop();
+        int code1 = computeOutCode(current.p1());
+        int code2 = computeOutCode(current.p2());
+        
+        if (!(code1 | code2)) { // 完全可见
+            clippedLines.append(current);
+        } else if (!(code1 & code2)) { // 部分可见
+            QPoint mid((current.p1().x() + current.p2().x()) / 2, 
+                        (current.p1().y() + current.p2().y()) / 2);
+            stack.push(QLine(mid, current.p2()));
+            stack.push(QLine(current.p1(), mid));
+        }
+    }
+}
+
+void CanvasWidget::processClipping() {
+    clippedLines.clear();
+    // 获取所有需要裁剪的线段
+    QVector<QLine> originalLines = getDrawnLines(); // 调用 getDrawnLines 函数
+    
+    foreach (QLine line, originalLines) {
+        if (clipAlgorithm == CohenSutherland) {
+            QLine clipped = line;
+            if (cohenSutherlandClip(clipped)) {
+                clippedLines.append(clipped);
+            }
+        } else {
+            midpointSubdivisionClip(line);
+        }
+    }
+
+    // 清除裁剪框外的内容
+    QPainter painter(&canvasImage);
+    painter.setCompositionMode(QPainter::CompositionMode_Source); // 设置绘制模式为直接覆盖
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(backgroundColor); // 使用背景色填充裁剪框外的部分
+
+    // 绘制裁剪框外的区域
+    QRegion outsideRegion = QRegion(canvasImage.rect()).subtracted(QRegion(clipRect));
+    painter.setClipRegion(outsideRegion);
+    painter.drawRect(canvasImage.rect());
+
+    // 清除裁剪框
+    clipRect = QRect();
+    update(); // 触发重绘
+}
+
+QVector<QLine> CanvasWidget::getDrawnLines() {
+    // 这里需要实现获取已绘制线段的逻辑
+    // 例如，可以维护一个 QVector<QLine> 的成员变量来存储所有绘制的线段
+    return QVector<QLine>(); // 返回空的 QVector 作为占位符
+}
+
+void CanvasWidget::drawMidpointLine(QPainter &painter, QPoint p1, QPoint p2) {
+    int x1 = p1.x(), y1 = p1.y();
+    int x2 = p2.x(), y2 = p2.y();
+    int dx = abs(x2 - x1), dy = abs(y2 - y1);
+    int sx = (x1 < x2) ? 1 : -1, sy = (y1 < y2) ? 1 : -1;
+    int err = dx - dy;
+
+    while (true) {
+        painter.drawPoint(x1, y1);
+        if (x1 == x2 && y1 == y2) break;
+        int e2 = 2 * err;
+        if (e2 > -dy) {
+            err -= dy;
+            x1 += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y1 += sy;
+        }
+    }
+}
+
+void CanvasWidget::setLineAlgorithm(LineAlgorithm algo) {
+    lineAlgorithm = algo;
 }

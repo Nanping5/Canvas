@@ -39,7 +39,8 @@ void MainWindow::setupUI() {
     // 选择绘制模式
     modeComboBox = new QComboBox(this);
     modeComboBox->addItem("自由绘制");
-    modeComboBox->addItem("直线");
+    modeComboBox->addItem("直线-Bresenham");
+    modeComboBox->addItem("直线-中点");
     modeComboBox->addItem("圆");
     modeComboBox->addItem("多边形");
     connect(modeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setDrawingMode);
@@ -65,6 +66,21 @@ void MainWindow::setupUI() {
         canvas->setDrawingMode(checked ? 5 : -1);  // 切换模式
     });
 
+    // 添加裁剪模式和算法选择
+    QComboBox *clipCombo = new QComboBox(this);
+    clipCombo->addItem("裁剪模式 - Cohen-Sutherland", QVariant::fromValue(CanvasWidget::CohenSutherland));
+    clipCombo->addItem("裁剪模式 - 中点分割", QVariant::fromValue(CanvasWidget::MidpointSubdivision));
+
+    // 连接裁剪模式选择的信号
+    connect(clipCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int index) {
+        QVariant data = clipCombo->itemData(index);
+        if (data.isValid()) {
+            CanvasWidget::ClipAlgorithm algo = data.value<CanvasWidget::ClipAlgorithm>();
+            canvas->setClipAlgorithm(algo);
+            canvas->setDrawingMode(6); // 6 是裁剪模式的标识
+        }
+    });
+
     // 添加到工具栏
     toolBar->addWidget(colorButton);
     toolBar->addWidget(clearButton);
@@ -73,6 +89,7 @@ void MainWindow::setupUI() {
     toolBar->addWidget(lineStyleComboBox);
     toolBar->addWidget(eraserButton);
     toolBar->addWidget(fillButton);
+    toolBar->addWidget(clipCombo);
 }
 
 void MainWindow::applyStyleSheet() {
@@ -162,9 +179,14 @@ void MainWindow::setLineStyle(int index) {
 
 
 void MainWindow::setDrawingMode(int index) {
-    int modeMap[] = {0, 1, 2, 4}; // 索引对应模式：0,1,2,4
-    if (index >= 0 && index < 4) {
+    int modeMap[] = {0, 1, 1, 2, 4}; // 索引对应模式：0,1,1,2,4
+    if (index >= 0 && index < 5) {
         canvas->setDrawingMode(modeMap[index]);
+        if (index == 1) {
+            canvas->setLineAlgorithm(CanvasWidget::Bresenham);
+        } else if (index == 2) {
+            canvas->setLineAlgorithm(CanvasWidget::Midpoint);
+        }
     }
 }
 

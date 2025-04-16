@@ -63,7 +63,7 @@ void MainWindow::setupUI() {
     fillButton->setCheckable(true);
     fillButton->setAutoExclusive(true);
     connect(fillButton, &QPushButton::toggled, this, [this](bool checked) {
-        canvas->setDrawingMode(checked ? 5 : -1);  // 切换模式
+        canvas->setDrawingMode(5 ? 5 : -1);  // 切换模式
     });
 
     // 添加裁剪模式和算法选择
@@ -81,6 +81,14 @@ void MainWindow::setupUI() {
         }
     });
 
+    // 添加选择按钮
+    QPushButton *selectButton = new QPushButton("🔍 选择", this);
+    selectButton->setCheckable(true);
+    connect(selectButton, &QPushButton::toggled, this, [this](bool checked) {
+        canvas->setSelectionMode(checked);
+    });
+
+
     // 添加到工具栏
     toolBar->addWidget(colorButton);
     toolBar->addWidget(clearButton);
@@ -90,6 +98,7 @@ void MainWindow::setupUI() {
     toolBar->addWidget(eraserButton);
     toolBar->addWidget(fillButton);
     toolBar->addWidget(clipCombo);
+    toolBar->addWidget(selectButton);
 }
 
 void MainWindow::applyStyleSheet() {
@@ -145,6 +154,21 @@ void MainWindow::applyStyleSheet() {
         QPushButton[text="🪣 填充"]:disabled {
             background-color: #D8DEE9;
             color: #999999;
+        }
+
+        QPushButton[text="🔍 选择"] {
+            background-color: #A3BE8C;
+            border: 2px solid #8FBCBB;
+            color: #2E3440;
+        }
+        QPushButton[text="🔍 选择"]:hover {
+            background-color: #8FBCBB;
+            border-color: #88C0D0;
+        }
+        QPushButton[text="🔍 选择"]:checked {
+            background-color: #88C0D0;
+            border-color: #81A1C1;
+            color: white;
         }
     )");
 }

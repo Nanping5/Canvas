@@ -34,89 +34,69 @@ void CanvasWidget::setLineStyle(Qt::PenStyle style) {
 void CanvasWidget::paintEvent(QPaintEvent *event) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    
+
     // 应用变换
     painter.translate(m_zoomOffset);
     painter.scale(m_zoomFactor, m_zoomFactor);
     painter.translate(-m_canvasOffset);
-    
+
     // 绘制画布
     painter.drawImage(m_canvasOffset, canvasImage);
-    
-    // 绘制实时预览
-    if (drawing) {
-        QColor previewColor = penColor;
-        float scaledWidth = penWidth * m_zoomFactor;
-        
-        if (drawingMode == 3) { // 橡皮擦模式
-            previewColor = Qt::gray;
-        } else {
-            previewColor.setAlpha(128);
-        }
-        
-        painter.setPen(QPen(previewColor, scaledWidth, Qt::SolidLine));
-        painter.setRenderHint(QPainter::Antialiasing);
 
-        // 根据不同模式绘制预览
+    // 如果正在移动，绘制预览
+    if ((selectionMode == 1 || selectionMode == 2) && isMoving && !selectionImage.isNull()) {
+        painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        // 在预览时也只显示非白色和非透明像素
+        for(int y = 0; y < selectionImage.height(); ++y) {
+            for(int x = 0; x < selectionImage.width(); ++x) {
+                QColor pixelColor = selectionImage.pixelColor(x, y);
+                if(pixelColor != Qt::white && pixelColor.alpha() > 0) {
+                    painter.setPen(pixelColor);
+                    painter.drawPoint(selectionRect.x() + x, selectionRect.y() + y);
+                }
+            }
+        }
+    }
+
+    // 绘制选择框
+    if ((selectionMode == 1 || selectionMode == 2) && !selectionRect.isNull()) {
+        QPen dashPen(Qt::black, 1, Qt::DashLine);
+        painter.setPen(dashPen);
+        painter.drawRect(selectionRect);
+    }
+
+    // 绘制绘画模式的预览
+    if (drawing && selectionMode == 0) {
+        painter.setRenderHint(QPainter::Antialiasing);
+        QPen pen(penColor, penWidth, lineStyle, Qt::RoundCap, Qt::RoundJoin);
+        painter.setPen(pen);
+
         switch (drawingMode) {
-        case 0: // 自由绘制模式
-            painter.drawLine(startPoint - m_canvasOffset, currentPoint - m_canvasOffset);
+        case 1: // 直线
+            painter.drawLine(startPoint, currentPoint);
             break;
-            
-        case 1: // 直线预览
-            painter.drawLine(startPoint - m_canvasOffset, currentPoint - m_canvasOffset);
-            break;
-            
-        case 2: { // 圆预览
-            QPoint adjustedStart = startPoint - m_canvasOffset;
-            QPoint adjustedCurrent = currentPoint - m_canvasOffset;
-            int radius = static_cast<int>(sqrt(pow(adjustedCurrent.x() - adjustedStart.x(), 2) +
-                                             pow(adjustedCurrent.y() - adjustedStart.y(), 2)));
-            painter.drawEllipse(adjustedStart, radius, radius);
+        case 2: { // 圆
+            int radius = static_cast<int>(sqrt(pow(currentPoint.x() - startPoint.x(), 2) +
+                                               pow(currentPoint.y() - startPoint.y(), 2)));
+            painter.drawEllipse(startPoint, radius, radius);
             break;
         }
-            
-        case 3: // 橡皮擦预览
-            painter.setBrush(Qt::NoBrush);
-            painter.drawEllipse(QPointF(currentPoint - m_canvasOffset), scaledWidth/2, scaledWidth/2);
-            break;
-            
-        case 4: // 多边形预览
+        case 4: // 多边形
             if (!polygonPoints.isEmpty()) {
-                // 绘制已确定的边
-                for (int i = 0; i < polygonPoints.size() - 1; ++i) {
-                    painter.drawLine(polygonPoints[i] - m_canvasOffset, 
-                                   polygonPoints[i + 1] - m_canvasOffset);
+                for (int i = 1; i < polygonPoints.size(); ++i) {
+                    painter.drawLine(polygonPoints[i-1], polygonPoints[i]);
                 }
-                // 绘制当前边
-                if (isFirstEdge) {
-                    painter.drawLine(polygonPoints.first() - m_canvasOffset, 
-                                   currentPoint - m_canvasOffset);
-                } else {
-                    painter.drawLine(polygonPoints.last() - m_canvasOffset, 
-                                   currentPoint - m_canvasOffset);
-                }
-                // 绘制回到起点的边
-                if (polygonPoints.size() > 1 && 
+                // 绘制最后一条线到当前点
+                painter.drawLine(polygonPoints.last(), currentPoint);
+
+                // 如果接近起点，显示闭合预览
+                if (polygonPoints.size() >= 2 &&
                     QLineF(currentPoint, firstVertex).length() < CLOSE_DISTANCE) {
-                    painter.drawLine(currentPoint - m_canvasOffset, 
-                                   polygonPoints.first() - m_canvasOffset);
+                    painter.drawLine(currentPoint, firstVertex);
                 }
             }
             break;
         }
-    }
-    
-    // 绘制裁剪框
-    if (isDraggingClipRect || !clipRect.isNull()) {
-        painter.setPen(QPen(Qt::red, 2, Qt::DashLine));
-        painter.drawRect(clipRect);
-    }
-    
-    // 绘制裁剪后的线段
-    painter.setPen(QPen(Qt::blue, 2));
-    foreach (QLine line, clippedLines) {
-        painter.drawLine(line);
     }
 }
 
@@ -147,7 +127,7 @@ void CanvasWidget::mousePressEvent(QMouseEvent *event) {
         if (event->button() == Qt::LeftButton) {
             QPointF imagePos = mapToImage(event->pos());
             QPoint point = imagePos.toPoint();
-            
+
             if (canvasImage.rect().contains(point)) {
                 floodFill(point);
                 update();
@@ -157,7 +137,7 @@ void CanvasWidget::mousePressEvent(QMouseEvent *event) {
         if (event->button() == Qt::LeftButton) {
             QPointF imagePos = mapToImage(event->pos());
             QPoint point = imagePos.toPoint();
-            
+
             if (!drawing) { // 开始新多边形
                 drawing = true;
                 isFirstEdge = true;
@@ -192,6 +172,39 @@ void CanvasWidget::mousePressEvent(QMouseEvent *event) {
         } else if (event->button() == Qt::RightButton) {
             clipWindow.setBottomRight(mapToImage(event->pos()).toPoint());
             processClipping();
+        }
+    } else if (selectionMode == 1) { // 选择模式
+        if (event->button() == Qt::LeftButton) {
+            QPoint clickPos = mapToImage(event->pos()).toPoint();
+            if (!selectionRect.isNull() && selectionRect.contains(clickPos)) {
+                // 如果点击在选择框内，切换到移动模式
+                selectionMode = 2;
+                isMoving = true;
+                selectionOffset = clickPos - selectionRect.topLeft();
+                // 保存当前画布状态
+                if (originalCanvas.isNull()) {
+                    originalCanvas = canvasImage.copy();
+                }
+            } else {
+                // 开始新的选择
+                isSelecting = true;
+                selectionRect = QRect();
+                selectionImage = QImage();
+                selectionRect.setTopLeft(clickPos);
+                selectionRect.setBottomRight(clickPos);
+            }
+        }
+    } else if (selectionMode == 2) { // 移动模式
+        if (event->button() == Qt::LeftButton) {
+            QPoint clickPos = mapToImage(event->pos()).toPoint();
+            if (selectionRect.contains(clickPos)) {
+                isMoving = true;
+                selectionOffset = clickPos - selectionRect.topLeft();
+                // 恢复到原始画布状态
+                if (!originalCanvas.isNull()) {
+                    canvasImage = originalCanvas.copy();
+                }
+            }
         }
     } else {
         QPointF imagePos = mapToImage(event->pos());
@@ -231,12 +244,38 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent *event) {
         QPoint currentPoint = mapToImage(event->pos()).toPoint();
         clipRect.setBottomRight(currentPoint);
         update(); // 触发重绘
-    } else if (drawing) {  // 处理所有绘制模式的移动
+    } else if (selectionMode == 1 && isSelecting) {
+        // 绘制选择框
+        QPoint currentPoint = mapToImage(event->pos()).toPoint();
+        selectionRect.setBottomRight(currentPoint);
+        update();
+    } else if ((selectionMode == 1 || selectionMode == 2) && isMoving) {
+        // 恢复到原始画布状态
+        canvasImage = originalCanvas.copy();
+
+        // 移动选择框时，更新位置并绘制内容
+        QPoint newPos = mapToImage(event->pos()).toPoint() - selectionOffset;
+        selectionRect.moveTo(newPos);
+
+        // 在新位置绘制选区内容
+        QPainter painter(&canvasImage);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        for(int y = 0; y < selectionImage.height(); ++y) {
+            for(int x = 0; x < selectionImage.width(); ++x) {
+                QColor pixelColor = selectionImage.pixelColor(x, y);
+                if(pixelColor != Qt::white && pixelColor.alpha() > 0) {
+                    painter.setPen(pixelColor);
+                    painter.drawPoint(selectionRect.x() + x, selectionRect.y() + y);
+                }
+            }
+        }
+        update();
+    } else if (drawing) {
         QPointF imagePos = mapToImage(event->pos());
         currentPoint = imagePos.toPoint();
-        
+
         // 自由绘制模式实时绘制
-        if (drawingMode == 0) { 
+        if (drawingMode == 0) {
             QPainter painter(&canvasImage);
             painter.setRenderHint(QPainter::Antialiasing);
             QPen pen(penColor, penWidth, lineStyle, Qt::RoundCap, Qt::RoundJoin);
@@ -255,15 +294,15 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent *event) {
             painter.drawLine(startPoint - m_canvasOffset, currentPoint - m_canvasOffset);
             startPoint = currentPoint;
         }
-        
+
         // 多边形模式特殊处理
         if (drawingMode == 4) {
-            if (polygonPoints.size() >= 2 && 
+            if (polygonPoints.size() >= 2 &&
                 QLineF(currentPoint, firstVertex).length() < CLOSE_DISTANCE) {
                 currentPoint = firstVertex;
             }
         }
-        
+
         update();  // 触发重绘更新预览
     }
 }
@@ -282,7 +321,7 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
         update(); // 触发重绘
     } else if (drawingMode == 4 && event->button() == Qt::LeftButton) {
         // 检查是否接近第一个顶点
-        if (QLineF(currentPoint, firstVertex).length() < CLOSE_DISTANCE && 
+        if (QLineF(currentPoint, firstVertex).length() < CLOSE_DISTANCE &&
             polygonPoints.size() >= 3) {
             // 完成多边形绘制
             QPainter painter(&canvasImage);
@@ -293,6 +332,20 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
             polygonPoints.clear();
             update();
         }
+    } else if (selectionMode == 1 && isSelecting) {
+        isSelecting = false;
+        selectionRect = selectionRect.normalized();
+
+        if (!selectionRect.isNull()) {
+            // 保存选择区域的图像
+            selectionImage = canvasImage.copy(selectionRect);
+            // 保存原始画布状态
+            originalCanvas = canvasImage.copy();
+        }
+        update();
+    } else if ((selectionMode == 1 || selectionMode == 2) && isMoving) {
+        isMoving = false;
+        update();
     } else {
         if (drawing) {
             drawing = false;
@@ -301,7 +354,7 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
                 // 处理其他模式的最终绘制
                 QPointF imagePos = mapToImage(event->pos());
                 endPoint = imagePos.toPoint();
-                
+
                 QPainter painter(&canvasImage);
                 painter.setRenderHint(QPainter::Antialiasing, true);
 
@@ -334,7 +387,7 @@ void CanvasWidget::drawBresenhamLine(QPainter &painter, QPoint p1, QPoint p2) {
     // 使用原始画笔宽度
     QPen pen(penColor, penWidth, Qt::SolidLine);
     painter.setPen(pen);
-    
+
     int x1 = p1.x(), y1 = p1.y();
     int x2 = p2.x(), y2 = p2.y();
     int dx = abs(x2 - x1), dy = abs(y2 - y1);
@@ -354,7 +407,7 @@ void CanvasWidget::drawBresenhamLine(QPainter &painter, QPoint p1, QPoint p2) {
                 drawPixel = false;
             }
         }
-        
+
         if(drawPixel) {
             painter.drawPoint(x1, y1);
         }
@@ -370,7 +423,7 @@ void CanvasWidget::drawBresenhamLine(QPainter &painter, QPoint p1, QPoint p2) {
 void CanvasWidget::drawMidpointArc(QPainter &painter, QPoint center, int radius, int, int) {
     QPen pen(penColor, penWidth, lineStyle);  // 确保使用当前线型
     painter.setPen(pen);
-    
+
     int x = radius;
     int y = 0;
     int p = 1 - radius;
@@ -379,15 +432,15 @@ void CanvasWidget::drawMidpointArc(QPainter &painter, QPoint center, int radius,
 
     while (x >= y) {
         bool drawPixel = true;
-        
+
         // 处理非实线样式
         if(lineStyle != Qt::SolidLine) {
             // 计算当前点属于虚线周期的哪个阶段
             int cyclePos = dashCounter % (dashLength * 2);
-            
+
             if(lineStyle == Qt::DashLine) {
                 drawPixel = (cyclePos < dashLength);  // 前半周期绘制，后半空白
-            } 
+            }
             else if(lineStyle == Qt::DotLine) {
                 drawPixel = (cyclePos < 1);  // 每个周期只绘制第一个点
             }
@@ -406,7 +459,7 @@ void CanvasWidget::drawMidpointArc(QPainter &painter, QPoint center, int radius,
 
         y++;
         dashCounter += 2;  // 每个y步进增加两次计数（对称点）
-        
+
         if (p <= 0) {
             p += 2 * y + 1;
         } else {
@@ -420,21 +473,21 @@ void CanvasWidget::wheelEvent(QWheelEvent *event) {
     if (event->modifiers() & Qt::ControlModifier) {
         // 获取鼠标位置
         QPointF mousePos = event->position();
-        
+
         // 保存当前画布位置
         QPointF scenePos = mapToImage(mousePos.toPoint());
-        
+
         // 计算新的缩放因子（使用更温和的缩放步长）
         if (event->angleDelta().y() > 0) {
             m_zoomFactor = qMin(5.0, m_zoomFactor * 1.05);
         } else {
             m_zoomFactor = qMax(0.2, m_zoomFactor / 1.05);
         }
-        
+
         // 调整偏移量保持鼠标位置不变
         QPointF newScreenPos = mapFromImage(scenePos);
         m_zoomOffset += (mousePos - newScreenPos);
-        
+
         update();
         event->accept();
     } else {
@@ -459,17 +512,17 @@ void CanvasWidget::floodFill(QPoint seedPoint) {
     QImage image = canvasImage.convertToFormat(QImage::Format_RGB32);
     QRgb oldColor = image.pixel(seedPoint);
     QRgb newColor = penColor.rgb();
-    
+
     if (oldColor == newColor) return;
 
     QQueue<QPoint> queue;
     queue.enqueue(seedPoint);
-    
+
     const int dx8[] = { -1, 0, 1, -1, 1, -1, 0, 1 };
     const int dy8[] = { -1, -1, -1, 0, 0, 1, 1, 1 };
     const int dx4[] = { -1, 0, 1, 0 };
     const int dy4[] = { 0, -1, 0, 1 };
-    
+
     const int* dx = fillConnectivity == EightWay ? dx8 : dx4;
     const int* dy = fillConnectivity == EightWay ? dy8 : dy4;
     const int count = fillConnectivity == EightWay ? 8 : 4;
@@ -486,7 +539,7 @@ void CanvasWidget::floodFill(QPoint seedPoint) {
             }
         }
     }
-    
+
     canvasImage = image.convertToFormat(QImage::Format_ARGB32);
 }
 
@@ -495,8 +548,8 @@ void CanvasWidget::setFillConnectivity(Connectivity conn) {
 }
 
 enum ClipAlgorithm { CohenSutherland, MidpointSubdivision };
-void CanvasWidget::setClipAlgorithm(ClipAlgorithm algo) { 
-    clipAlgorithm = algo; 
+void CanvasWidget::setClipAlgorithm(ClipAlgorithm algo) {
+    clipAlgorithm = algo;
 }
 
 QRect clipWindow; // 裁剪窗口
@@ -512,19 +565,19 @@ const int TOP = 8;    // 1000
 
 int CanvasWidget::computeOutCode(const QPoint &p) const {
     int code = INSIDE;
-    
+
     if (p.x() < clipRect.left()) code |= LEFT;
-    else if (p.x() > clipRect.right()) code |= RIGHT;
+    if (p.x() > clipRect.right()) code |= RIGHT;
     if (p.y() < clipRect.top()) code |= TOP;
-    else if (p.y() > clipRect.bottom()) code |= BOTTOM;
-    
+    if (p.y() > clipRect.bottom()) code |= BOTTOM;
+
     return code;
 }
 
 bool CanvasWidget::cohenSutherlandClip(QLine &line) {
     QPoint p1 = line.p1();
     QPoint p2 = line.p2();
-    
+
     int outcode1 = computeOutCode(p1);
     int outcode2 = computeOutCode(p2);
     bool accept = false;
@@ -572,17 +625,17 @@ bool CanvasWidget::cohenSutherlandClip(QLine &line) {
 void CanvasWidget::midpointSubdivisionClip(QLine line) {
     QStack<QLine> stack;
     stack.push(line);
-    
+
     while (!stack.isEmpty()) {
         QLine current = stack.pop();
         int code1 = computeOutCode(current.p1());
         int code2 = computeOutCode(current.p2());
-        
+
         if (!(code1 | code2)) { // 完全可见
             clippedLines.append(current);
         } else if (!(code1 & code2)) { // 部分可见
-            QPoint mid((current.p1().x() + current.p2().x()) / 2, 
-                        (current.p1().y() + current.p2().y()) / 2);
+            QPoint mid((current.p1().x() + current.p2().x()) / 2,
+                       (current.p1().y() + current.p2().y()) / 2);
             stack.push(QLine(mid, current.p2()));
             stack.push(QLine(current.p1(), mid));
         }
@@ -593,7 +646,7 @@ void CanvasWidget::processClipping() {
     clippedLines.clear();
     // 获取所有需要裁剪的线段
     QVector<QLine> originalLines = getDrawnLines(); // 调用 getDrawnLines 函数
-    
+
     foreach (QLine line, originalLines) {
         if (clipAlgorithm == CohenSutherland) {
             QLine clipped = line;
@@ -651,4 +704,25 @@ void CanvasWidget::drawMidpointLine(QPainter &painter, QPoint p1, QPoint p2) {
 
 void CanvasWidget::setLineAlgorithm(LineAlgorithm algo) {
     lineAlgorithm = algo;
+}
+
+void CanvasWidget::setSelectionMode(bool enabled) {
+    if (enabled && selectionMode == 0) {
+        // 从其他模式进入选择模式
+        selectionMode = 1;
+        selectionRect = QRect();
+        selectionImage = QImage();
+        originalCanvas = QImage();
+        isSelecting = false;
+        isMoving = false;
+    } else {
+        // 退出选择模式，将当前状态合并到画布
+        selectionMode = 0;
+        selectionRect = QRect();
+        selectionImage = QImage();
+        originalCanvas = QImage();
+        isSelecting = false;
+        isMoving = false;
+    }
+    update();
 }

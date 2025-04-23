@@ -12,6 +12,9 @@ public:
     enum Connectivity { FourWay, EightWay };  // 枚举必须首先声明
     enum ClipAlgorithm { CohenSutherland, MidpointSubdivision };
     enum LineAlgorithm { Bresenham, Midpoint };
+    /**
+     * 在Bezier曲线模式下，右键点击可以完成曲线绘制并将其保存到画布上
+     */
     explicit CanvasWidget(QWidget *parent = nullptr);
     void setPenColor(QColor color);
     void setPenWidth(int width);
@@ -29,6 +32,7 @@ public:
     QPoint mapFromCanvas(const QPoint& canvasPos) const;
     QVector<QLine> getDrawnLines();  // 添加获取已绘制线段的函数声明
     int selectionMode = 0; // 0: normal, 1: select, 2: move
+    bool saveImage(const QString &fileName, const char *format = nullptr);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -71,6 +75,7 @@ private:
     bool isSelecting = false; // 是否正在选择
     bool isMoving = false; // 是否正在移动
     QPoint selectionOffset; // 移动时的偏移量
+    QVector<QPoint> controlPoints; // 存储控制点
     void floodFill(QPoint seedPoint);  // 函数声明
 
     QPointF mapToImage(const QPoint& pos) const;
@@ -82,6 +87,8 @@ private:
     bool cohenSutherlandClip(QLine &line);
     void midpointSubdivisionClip(QLine line);
     void processClipping();
+    void drawBezierCurve(QPainter &painter);
+    QPoint deCasteljau(const QVector<QPoint> &points, double t);
 };
 
 #endif // CANVASWIDGET_H

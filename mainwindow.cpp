@@ -2,6 +2,8 @@
 #include <QColorDialog>
 #include <QInputDialog>
 #include <QVBoxLayout>
+#include <QFileDialog>
+#include <QMessageBox>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent) {
@@ -25,15 +27,15 @@ void MainWindow::setupUI() {
     addToolBar(Qt::TopToolBarArea, toolBar);
 
     // 颜色选择按钮
-    colorButton = new QPushButton("🎨 颜色", this);
+    colorButton = new QPushButton("颜色", this);
     connect(colorButton, &QPushButton::clicked, this, &MainWindow::selectColor);
 
     // 清除按钮
-    clearButton = new QPushButton("🗑 清除", this);
+    clearButton = new QPushButton("清除", this);
     connect(clearButton, &QPushButton::clicked, this, &MainWindow::clearCanvas);
 
     // 画笔粗细按钮
-    penWidthButton = new QPushButton("✏️ 粗细", this);
+    penWidthButton = new QPushButton("粗细", this);
     connect(penWidthButton, &QPushButton::clicked, this, &MainWindow::setPenWidth);
 
     // 选择绘制模式
@@ -43,6 +45,7 @@ void MainWindow::setupUI() {
     modeComboBox->addItem("直线-中点");
     modeComboBox->addItem("圆");
     modeComboBox->addItem("多边形");
+    modeComboBox->addItem("Bezier曲线");
     connect(modeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setDrawingMode);
 
     // 线型选择框
@@ -55,11 +58,11 @@ void MainWindow::setupUI() {
     connect(lineStyleComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setLineStyle);
 
     // 创建橡皮擦按钮
-    eraserButton = new QPushButton("🧽 橡皮擦", this);
+    eraserButton = new QPushButton("橡皮擦", this);
     connect(eraserButton, &QPushButton::clicked, this, &MainWindow::selectEraser);
 
     // 添加填充按钮
-    QPushButton *fillButton = new QPushButton("🪣 填充", this);
+    QPushButton *fillButton = new QPushButton("填充", this);
     fillButton->setCheckable(true);
     fillButton->setAutoExclusive(true);
     connect(fillButton, &QPushButton::toggled, this, [this](bool checked) {
@@ -82,14 +85,18 @@ void MainWindow::setupUI() {
     });
 
     // 添加选择按钮
-    QPushButton *selectButton = new QPushButton("🔍 选择", this);
+    QPushButton *selectButton = new QPushButton("选中", this);
     selectButton->setCheckable(true);
     connect(selectButton, &QPushButton::toggled, this, [this](bool checked) {
         canvas->setSelectionMode(checked);
     });
 
+    // 添加保存按钮
+    QPushButton *saveButton = new QPushButton("💾 保存", this);
+    connect(saveButton, &QPushButton::clicked, this, &MainWindow::saveCanvas);
 
     // 添加到工具栏
+    toolBar->addWidget(saveButton);
     toolBar->addWidget(colorButton);
     toolBar->addWidget(clearButton);
     toolBar->addWidget(penWidthButton);
@@ -99,6 +106,7 @@ void MainWindow::setupUI() {
     toolBar->addWidget(fillButton);
     toolBar->addWidget(clipCombo);
     toolBar->addWidget(selectButton);
+
 }
 
 void MainWindow::applyStyleSheet() {
@@ -203,8 +211,8 @@ void MainWindow::setLineStyle(int index) {
 
 
 void MainWindow::setDrawingMode(int index) {
-    int modeMap[] = {0, 1, 1, 2, 4}; // 索引对应模式：0,1,1,2,4
-    if (index >= 0 && index < 5) {
+    int modeMap[] = {0, 1, 1, 2, 4, 7}; // 索引对应模式：0,1,1,2,4,7
+    if (index >= 0 && index < 6) {
         canvas->setDrawingMode(modeMap[index]);
         if (index == 1) {
             canvas->setLineAlgorithm(CanvasWidget::Bresenham);
@@ -220,5 +228,17 @@ void MainWindow::selectEraser() {
     if (ok) {
         canvas->setDrawingMode(3);  // 设置为橡皮擦模式
         canvas->setPenWidth(width);
+    }
+}
+
+void MainWindow::saveCanvas() {
+    QString fileName = QFileDialog::getSaveFileName(this,
+        tr("保存图像"), "",
+        tr("PNG 文件 (*.png);;JPEG 文件 (*.jpg *.jpeg);;BMP 文件 (*.bmp);;所有文件 (*)"));
+    
+    if (!fileName.isEmpty()) {
+        if (!canvas->saveImage(fileName)) {
+            QMessageBox::warning(this, tr("保存失败"), tr("无法保存图像文件。"));
+        }
     }
 }

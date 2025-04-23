@@ -21,6 +21,8 @@ private slots:
     void setDrawingMode(int index);
     void setLineStyle(int index);
     void selectEraser();
+    void saveCanvas();
+
 private:
     CanvasWidget *canvas;
     QPushButton *colorButton;

@@ -9,6 +9,7 @@ CanvasWidget::CanvasWidget(QWidget *parent) : QWidget(parent), penColor(Qt::blac
     canvasImage.fill(Qt::white);
     lineStyle = Qt::SolidLine;  // 默认使用实线
     backgroundColor = Qt::white;  // 默认使用白色作为背景色
+    controlPoints.clear();
 }
 
 void CanvasWidget::setPenColor(QColor color) {
@@ -26,6 +27,10 @@ void CanvasWidget::clearCanvas() {
 
 void CanvasWidget::setDrawingMode(int mode) {
     drawingMode = mode;
+    if (mode != 7) {
+        controlPoints.clear(); // 切换到其他模式时清除控制点
+    }
+    update();
 }
 void CanvasWidget::setLineStyle(Qt::PenStyle style) {
     lineStyle = style;
@@ -96,6 +101,28 @@ void CanvasWidget::paintEvent(QPaintEvent *event) {
                 }
             }
             break;
+        }
+    }
+
+    // 绘制控制点和Bezier曲线
+    if (drawingMode == 7 && !controlPoints.isEmpty()) {
+        painter.setRenderHint(QPainter::Antialiasing);
+        
+        // 绘制控制点
+        painter.setPen(QPen(Qt::red, 5));
+        for (const QPoint &point : controlPoints) {
+            painter.drawPoint(point);
+        }
+        
+        // 绘制控制多边形
+        painter.setPen(QPen(Qt::gray, 1, Qt::DashLine));
+        for (int i = 1; i < controlPoints.size(); ++i) {
+            painter.drawLine(controlPoints[i-1], controlPoints[i]);
+        }
+        
+        // 绘制Bezier曲线
+        if (controlPoints.size() >= 2) {
+            drawBezierCurve(painter);
         }
     }
 }
@@ -206,7 +233,12 @@ void CanvasWidget::mousePressEvent(QMouseEvent *event) {
                 }
             }
         }
-    } else {
+    } else if (event->button() == Qt::LeftButton) {
+        if (drawingMode == 7) { // Bezier曲线模式
+            QPointF imagePos = mapToImage(event->pos());
+            controlPoints.append(imagePos.toPoint());
+            update();
+        }
         QPointF imagePos = mapToImage(event->pos());
         startPoint = imagePos.toPoint();
         currentPoint = startPoint; // 初始化当前点
@@ -378,6 +410,17 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
                     break;
                 }
             }
+            update();
+        }
+        if (event->button() == Qt::RightButton && drawingMode == 7 && controlPoints.size() >= 2) {
+            // 右键完成Bezier曲线绘制并保存到画布
+            QPainter painter(&canvasImage);
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setPen(QPen(penColor, penWidth, lineStyle));
+            drawBezierCurve(painter);
+            
+            // 清除控制点
+            controlPoints.clear();
             update();
         }
     }
@@ -725,4 +768,54 @@ void CanvasWidget::setSelectionMode(bool enabled) {
         isMoving = false;
     }
     update();
+}
+
+// 实现de Casteljau算法
+QPoint CanvasWidget::deCasteljau(const QVector<QPoint> &points, double t) {
+    if (points.size() == 1) {
+        return points[0];
+    }
+    
+    QVector<QPoint> newPoints;
+    for (int i = 1; i < points.size(); ++i) {
+        QPoint p = (1 - t) * points[i-1] + t * points[i];
+        newPoints.append(p);
+    }
+    
+    return deCasteljau(newPoints, t);
+}
+
+// 绘制Bezier曲线
+void CanvasWidget::drawBezierCurve(QPainter &painter) {
+    painter.setPen(QPen(penColor, penWidth, lineStyle));
+    
+    const int steps = 100; // 曲线采样点数
+    QPoint prevPoint = controlPoints[0];
+    
+    for (int i = 1; i <= steps; ++i) {
+        double t = static_cast<double>(i) / steps;
+        QPoint currentPoint = deCasteljau(controlPoints, t);
+        painter.drawLine(prevPoint, currentPoint);
+        prevPoint = currentPoint;
+    }
+}
+
+// 实现保存函数
+bool CanvasWidget::saveImage(const QString &fileName, const char *format) {
+    // 创建一个与画布大小相同的临时图像
+    QImage image(canvasImage.size(), QImage::Format_ARGB32);
+    image.fill(Qt::white);
+    
+    // 将当前画布内容绘制到临时图像上
+    QPainter painter(&image);
+    painter.drawImage(0, 0, canvasImage);
+    
+    // 如果当前正在绘制Bezier曲线，也将其绘制到图像上
+    if (drawingMode == 7 && !controlPoints.isEmpty()) {
+        painter.setPen(QPen(penColor, penWidth, lineStyle));
+        drawBezierCurve(painter);
+    }
+    
+    // 保存图像
+    return image.save(fileName, format);
 }

@@ -46,6 +46,7 @@ void MainWindow::setupUI() {
     modeComboBox->addItem("圆");
     modeComboBox->addItem("多边形");
     modeComboBox->addItem("Bezier曲线");
+    modeComboBox->addItem("圆弧-中点");
     connect(modeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setDrawingMode);
 
     // 线型选择框
@@ -211,8 +212,8 @@ void MainWindow::setLineStyle(int index) {
 
 
 void MainWindow::setDrawingMode(int index) {
-    int modeMap[] = {0, 1, 1, 2, 4, 7}; // 索引对应模式：0,1,1,2,4,7
-    if (index >= 0 && index < 6) {
+    int modeMap[] = {0, 1, 1, 2, 4, 7, 8};
+    if (index >= 0 && index < 7) {
         canvas->setDrawingMode(modeMap[index]);
         if (index == 1) {
             canvas->setLineAlgorithm(CanvasWidget::Bresenham);

@@ -41,6 +41,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;  // 添加键盘事件处理
 
 private:
     QImage canvasImage;
@@ -76,19 +77,35 @@ private:
     bool isMoving = false; // 是否正在移动
     QPoint selectionOffset; // 移动时的偏移量
     QVector<QPoint> controlPoints; // 存储控制点
+    QVector<QVector<QPoint>> allPolygons;     // 存储所有已绘多边形
+    QVector<QVector<QPoint>> clippedPolygons; // 存储裁剪后的多边形
+    QVector<QLine> originalLines;             // 存储原始线段
     void floodFill(QPoint seedPoint);  // 函数声明
+    bool inside(const QPoint& p, int edge, int xmin, int ymin, int xmax, int ymax);
+    QPoint computeIntersection(QPoint p1, QPoint p2, int edge, 
+                              int xmin, int ymin, int xmax, int ymax);
 
     QPointF mapToImage(const QPoint& pos) const;
     QPointF mapFromImage(const QPointF& imagePos) const;
     void drawBresenhamLine(QPainter &painter, QPoint p1, QPoint p2);
     void drawMidpointLine(QPainter &painter, QPoint p1, QPoint p2); // 添加中点算法声明
-    void drawMidpointArc(QPainter &painter, QPoint center, int radius, int startAngle, int endAngle);
+    void drawMidpointArc(QPainter &painter, QPoint center, int radius, 
+                        double startAngle, double endAngle, bool isFullCircle = false);
     int computeOutCode(const QPoint &p) const;
     bool cohenSutherlandClip(QLine &line);
     void midpointSubdivisionClip(QLine line);
     void processClipping();
     void drawBezierCurve(QPainter &painter);
     QPoint deCasteljau(const QVector<QPoint> &points, double t);
+    void drawArcPoint(QPainter &painter, QPoint center, int x, int y, int dashCounter, int dashLength);
+    void clipPolygons(); // 多边形裁剪函数
+
+signals:
+    void imageModified();
+    void clippingConfirmed();
+
+public slots:
+    void confirmClipping();
 };
 
 #endif // CANVASWIDGET_H

@@ -4,12 +4,30 @@
 #include <QQueue>
 #include <QStack>
 
-CanvasWidget::CanvasWidget(QWidget *parent) : QWidget(parent), penColor(Qt::black), penWidth(2), drawing(false), drawingMode(0) {
-    canvasImage = QImage(1440, 1024, QImage::Format_ARGB32);
+CanvasWidget::CanvasWidget(QWidget *parent) : 
+    QWidget(parent), 
+    penColor(Qt::black),
+    penWidth(2),
+    drawing(false),
+    drawingMode(0),
+    lineStyle(Qt::SolidLine),
+    backgroundColor(Qt::white),
+    m_zoomFactor(1.0),
+    isFirstEdge(false),
+    fillConnectivity(EightWay),
+    clipAlgorithm(CohenSutherland),
+    lineAlgorithm(Bresenham),
+    selectionMode(0),
+    isDraggingClipRect(false),
+    isDraggingSelection(false),
+    isSelecting(false),
+    isMoving(false)
+{
+    setFocusPolicy(Qt::StrongFocus);
+    canvasImage = QImage(800, 600, QImage::Format_ARGB32);
     canvasImage.fill(Qt::white);
-    lineStyle = Qt::SolidLine;  // 默认使用实线
-    backgroundColor = Qt::white;  // 默认使用白色作为背景色
-    controlPoints.clear();
+    originalCanvas = canvasImage.copy();
+    setMouseTracking(true);
 }
 
 void CanvasWidget::setPenColor(QColor color) {
@@ -101,6 +119,15 @@ void CanvasWidget::paintEvent(QPaintEvent *event) {
                 }
             }
             break;
+        case 8: { // 圆弧
+            int radius = static_cast<int>(sqrt(pow(currentPoint.x() - startPoint.x(), 2) +
+                                               pow(currentPoint.y() - startPoint.y(), 2)));
+            double dx = currentPoint.x() - startPoint.x();
+            double dy = currentPoint.y() - startPoint.y();
+            double startAngle = qRadiansToDegrees(atan2(-dy, dx));
+            drawMidpointArc(painter, startPoint - m_canvasOffset, radius, startAngle, startAngle+90, false);
+            break;
+        }
         }
     }
 
@@ -124,6 +151,44 @@ void CanvasWidget::paintEvent(QPaintEvent *event) {
         if (controlPoints.size() >= 2) {
             drawBezierCurve(painter);
         }
+    }
+
+    // 绘制裁剪框预览
+    if (drawingMode == 6 && isDraggingClipRect) {
+        painter.setPen(QPen(Qt::red, 1, Qt::DashLine));
+        painter.drawRect(QRect(clipStartPoint, currentPoint).normalized());
+    }
+
+    // 绘制当前裁剪窗口
+    if (!clipRect.isNull()) {
+        painter.setPen(QPen(Qt::blue, 1, Qt::DashLine));
+        painter.drawRect(clipRect);
+    }
+
+    // 绘制裁剪后的线段
+    painter.setPen(QPen(Qt::green, 2));
+    for (const QLine& line : clippedLines) {
+        painter.drawLine(mapFromCanvas(line.p1()), mapFromCanvas(line.p2()));
+    }
+
+    // 绘制裁剪后的多边形
+    painter.setPen(QPen(Qt::blue, 2));
+    for (const auto& poly : clippedPolygons) {
+        QVector<QPoint> windowPoints;
+        for (const QPoint& p : poly) {
+            windowPoints.append(mapFromCanvas(p));
+        }
+        painter.drawPolygon(windowPoints.data(), windowPoints.size());
+    }
+
+    // 绘制原始多边形（应用画布偏移）
+    painter.setPen(QPen(QColor(255,0,0,100), 2));
+    for (const auto& poly : allPolygons) {
+        QVector<QPoint> windowPoints;
+        for (const QPoint& p : poly) {
+            windowPoints.append(mapFromCanvas(p));
+        }
+        painter.drawPolygon(windowPoints.data(), windowPoints.size());
     }
 }
 
@@ -343,14 +408,14 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::MiddleButton) {
         setCursor(Qt::ArrowCursor);
         event->accept();
-    } else if (event->button() == Qt::LeftButton && isDraggingClipRect && drawingMode == 6) { // 裁剪模式
+    } else if (event->button() == Qt::LeftButton && isDraggingClipRect) {
         isDraggingClipRect = false;
         QPoint endPoint = mapToImage(event->pos()).toPoint();
-        clipRect.setBottomRight(endPoint);
-
-        // 执行裁剪
-        processClipping();
-        update(); // 触发重绘
+        // 确保裁剪框在图像范围内
+        QPoint validStart = mapToCanvas(clipStartPoint);
+        QPoint validEnd = mapToCanvas(endPoint);
+        clipRect = QRect(validStart, validEnd).normalized().intersected(canvasImage.rect());
+        update();
     } else if (drawingMode == 4 && event->button() == Qt::LeftButton) {
         // 检查是否接近第一个顶点
         if (QLineF(currentPoint, firstVertex).length() < CLOSE_DISTANCE &&
@@ -359,7 +424,13 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
             QPainter painter(&canvasImage);
             painter.setRenderHint(QPainter::Antialiasing);
             painter.setPen(QPen(penColor, penWidth, lineStyle));
-            painter.drawPolygon(polygonPoints.data(), polygonPoints.size());
+            // 转换为图像坐标系
+            QVector<QPoint> imagePoints;
+            for (const QPoint& p : polygonPoints) {
+                imagePoints.append(mapToCanvas(p));
+            }
+            painter.drawPolygon(imagePoints.data(), imagePoints.size());
+            allPolygons.append(imagePoints);
             drawing = false;
             polygonPoints.clear();
             update();
@@ -381,6 +452,23 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
     } else {
         if (drawing) {
             drawing = false;
+            // 处理圆弧模式的最终绘制
+            if (drawingMode == 8) { // 圆弧模式
+                QPointF imagePos = mapToImage(event->pos());
+                endPoint = imagePos.toPoint();
+                
+                QPainter painter(&canvasImage);
+                painter.setRenderHint(QPainter::Antialiasing);
+                int radius = static_cast<int>(sqrt(pow(endPoint.x() - startPoint.x(), 2) +
+                                                  pow(endPoint.y() - startPoint.y(), 2)));
+                // 计算动态角度
+                double dx = endPoint.x() - startPoint.x();
+                double dy = endPoint.y() - startPoint.y();
+                double startAngle = qRadiansToDegrees(atan2(-dy, dx));
+                double endAngle = startAngle + 90; // 固定90度圆弧
+                
+                drawMidpointArc(painter, startPoint - m_canvasOffset, radius, startAngle, endAngle);
+            }
             // 自由绘制模式不需要额外处理，因为已经实时绘制
             if (drawingMode == 1 || drawingMode == 2 || drawingMode == 3) {
                 // 处理其他模式的最终绘制
@@ -401,7 +489,7 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
                 case 2: { // 圆
                     int radius = static_cast<int>(sqrt(pow(endPoint.x() - startPoint.x(), 2) +
                                                        pow(endPoint.y() - startPoint.y(), 2)));
-                    drawMidpointArc(painter, startPoint - m_canvasOffset, radius, 0, 360);
+                    drawMidpointArc(painter, startPoint - m_canvasOffset, radius, 0, 0, true);
                     break;
                 }
                 case 3: // 橡皮擦
@@ -463,33 +551,18 @@ void CanvasWidget::drawBresenhamLine(QPainter &painter, QPoint p1, QPoint p2) {
     }
 }
 
-void CanvasWidget::drawMidpointArc(QPainter &painter, QPoint center, int radius, int, int) {
-    QPen pen(penColor, penWidth, lineStyle);  // 确保使用当前线型
+void CanvasWidget::drawMidpointArc(QPainter &painter, QPoint center, int radius, 
+                                  double startAngle, double endAngle, bool isFullCircle) {
+    QPen pen(penColor, penWidth, lineStyle);
     painter.setPen(pen);
 
     int x = radius;
     int y = 0;
     int p = 1 - radius;
-    int dashCounter = 0;
-    const int dashLength = (lineStyle == Qt::DotLine) ? 2 : 5;  // 点线间隔更短
 
-    while (x >= y) {
-        bool drawPixel = true;
-
-        // 处理非实线样式
-        if(lineStyle != Qt::SolidLine) {
-            // 计算当前点属于虚线周期的哪个阶段
-            int cyclePos = dashCounter % (dashLength * 2);
-
-            if(lineStyle == Qt::DashLine) {
-                drawPixel = (cyclePos < dashLength);  // 前半周期绘制，后半空白
-            }
-            else if(lineStyle == Qt::DotLine) {
-                drawPixel = (cyclePos < 1);  // 每个周期只绘制第一个点
-            }
-        }
-
-        if(drawPixel) {
+    if (isFullCircle) {
+        while (x >= y) {
+            // 绘制八个对称点
             painter.drawPoint(center.x() + x, center.y() - y);
             painter.drawPoint(center.x() + y, center.y() - x);
             painter.drawPoint(center.x() - y, center.y() - x);
@@ -498,17 +571,84 @@ void CanvasWidget::drawMidpointArc(QPainter &painter, QPoint center, int radius,
             painter.drawPoint(center.x() - y, center.y() + x);
             painter.drawPoint(center.x() + y, center.y() + x);
             painter.drawPoint(center.x() + x, center.y() + y);
-        }
 
-        y++;
-        dashCounter += 2;  // 每个y步进增加两次计数（对称点）
-
-        if (p <= 0) {
-            p += 2 * y + 1;
-        } else {
-            x--;
-            p += 2 * (y - x) + 1;
+            y++;
+            if (p <= 0) {
+                p += 2 * y + 1;
+            } else {
+                x--;
+                p += 2 * (y - x) + 1;
+            }
         }
+    } else {
+        startAngle = qDegreesToRadians(startAngle);
+        endAngle = qDegreesToRadians(endAngle);
+        if (endAngle < startAngle) endAngle += 2*M_PI;
+
+        auto inAngleRange = [](double angle, double start, double end) {
+            angle = fmod(angle, 2*M_PI);
+            if (angle < 0) angle += 2*M_PI;
+            return (start <= end) ? (angle >= start && angle <= end) : (angle >= start || angle <= end);
+        };
+
+        while (x >= y) {
+            // 绘制第一象限的两个关键点及其邻近点
+            double baseAngle = atan2(-y, x);
+            
+            // 主点 (x,y)
+            if (inAngleRange(baseAngle, startAngle, endAngle)) {
+                painter.drawPoint(center.x() + x, center.y() - y);
+            }
+            
+            // 对称点 (y,x)
+            double symAngle = M_PI_2 - baseAngle;
+            if (inAngleRange(symAngle, startAngle, endAngle)) {
+                painter.drawPoint(center.x() + y, center.y() - x);
+            }
+            
+            // 添加中间点提高连续性
+            for (int i = 1; i <= 3; ++i) {
+                double ratio = i * 0.25;
+                int px = x - static_cast<int>(x * ratio);
+                int py = y + static_cast<int>(y * ratio);
+                
+                if (px < 0 || py < 0) continue;
+                
+                double midAngle = atan2(-py, px);
+                if (inAngleRange(midAngle, startAngle, endAngle)) {
+                    painter.drawPoint(center.x() + px, center.y() - py);
+                }
+            }
+
+            // 原始算法步进
+            y++;
+            if (p <= 0) {
+                p += 2 * y + 1;
+            } else {
+                x--;
+                p += 2 * (y - x) + 1;
+            }
+        }
+    }
+}
+
+// 辅助函数：绘制单个圆弧点
+void CanvasWidget::drawArcPoint(QPainter &painter, QPoint center, 
+                               int x, int y, int dashCounter, int dashLength) {
+    bool drawPixel = true;
+    
+    if(lineStyle != Qt::SolidLine) {
+        int cyclePos = dashCounter % (dashLength * 2);
+        if(lineStyle == Qt::DashLine) {
+            drawPixel = (cyclePos < dashLength);
+        }
+        else if(lineStyle == Qt::DotLine) {
+            drawPixel = (cyclePos < 1);
+        }
+    }
+
+    if(drawPixel) {
+        painter.drawPoint(center.x() + x, center.y() - y);
     }
 }
 
@@ -686,10 +826,12 @@ void CanvasWidget::midpointSubdivisionClip(QLine line) {
 }
 
 void CanvasWidget::processClipping() {
+    // 清空之前的结果
     clippedLines.clear();
-    // 获取所有需要裁剪的线段
-    QVector<QLine> originalLines = getDrawnLines(); // 调用 getDrawnLines 函数
+    clippedPolygons.clear();
 
+    // 处理线段裁剪（原有逻辑）
+    originalLines = getDrawnLines();
     foreach (QLine line, originalLines) {
         if (clipAlgorithm == CohenSutherland) {
             QLine clipped = line;
@@ -701,20 +843,23 @@ void CanvasWidget::processClipping() {
         }
     }
 
-    // 清除裁剪框外的内容
-    QPainter painter(&canvasImage);
-    painter.setCompositionMode(QPainter::CompositionMode_Source); // 设置绘制模式为直接覆盖
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(backgroundColor); // 使用背景色填充裁剪框外的部分
+    // 处理多边形裁剪（新增逻辑）
+    if (!allPolygons.isEmpty()) {
+        clipPolygons();
+    }
 
-    // 绘制裁剪框外的区域
+    // 清除裁剪框外的内容（原有逻辑）
+    QPainter painter(&canvasImage);
+    painter.setCompositionMode(QPainter::CompositionMode_Source);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(backgroundColor);
+    
     QRegion outsideRegion = QRegion(canvasImage.rect()).subtracted(QRegion(clipRect));
     painter.setClipRegion(outsideRegion);
     painter.drawRect(canvasImage.rect());
-
-    // 清除裁剪框
-    clipRect = QRect();
-    update(); // 触发重绘
+    
+    // 保留裁剪框
+    update();
 }
 
 QVector<QLine> CanvasWidget::getDrawnLines() {
@@ -818,4 +963,179 @@ bool CanvasWidget::saveImage(const QString &fileName, const char *format) {
     
     // 保存图像
     return image.save(fileName, format);
+}
+
+void CanvasWidget::clipPolygons() {
+    clippedPolygons.clear();
+    
+    if (clipRect.isEmpty() || allPolygons.isEmpty()) return;
+    
+    // 使用图像坐标系进行裁剪计算
+    QRect imageClipRect = QRect(
+        mapToCanvas(clipRect.topLeft()),
+        mapToCanvas(clipRect.bottomRight())
+    ).normalized();
+    
+    int xmin = imageClipRect.left();
+    int ymin = imageClipRect.top();
+    int xmax = imageClipRect.right();
+    int ymax = imageClipRect.bottom();
+
+    for (const auto& polygon : allPolygons) {
+        if (polygon.size() < 3) continue; // 忽略无效多边形
+        
+        QVector<QPoint> outputList = polygon;
+        
+        for (int edge = 0; edge < 4; edge++) {
+            QVector<QPoint> inputList = outputList;
+            outputList.clear();
+            
+            if (inputList.isEmpty()) break;
+            
+            QPoint s = inputList.last();
+            for (const QPoint& p : inputList) {
+                if (inside(p, edge, xmin, ymin, xmax, ymax)) {
+                    if (!inside(s, edge, xmin, ymin, xmax, ymax)) {
+                        QPoint intersect = computeIntersection(s, p, edge, xmin, ymin, xmax, ymax);
+                        if (!intersect.isNull()) {
+                            outputList.append(computeIntersection(s, p, edge, xmin, ymin, xmax, ymax));
+                        }
+                    }
+                    outputList.append(p);
+                } else if (inside(s, edge, xmin, ymin, xmax, ymax)) {
+                    QPoint intersect = computeIntersection(s, p, edge, xmin, ymin, xmax, ymax);
+                    if (!intersect.isNull()) {
+                        outputList.append(computeIntersection(s, p, edge, xmin, ymin, xmax, ymax));
+                    }
+                }
+                s = p;
+            }
+        }
+        
+        if (outputList.size() >= 3) { // 只保留有效多边形
+            clippedPolygons.append(outputList);
+        }
+    }
+}
+
+// 辅助函数：判断点是否在边界内侧
+bool CanvasWidget::inside(const QPoint& p, int edge, int xmin, int ymin, int xmax, int ymax) {
+    switch (edge) {
+    case 0: return p.x() >= xmin; // left
+    case 1: return p.y() <= ymax; // bottom
+    case 2: return p.x() <= xmax; // right
+    case 3: return p.y() >= ymin; // top
+    }
+    return false;
+}
+
+// 计算线段与边界的交点
+QPoint CanvasWidget::computeIntersection(QPoint p1, QPoint p2, int edge, 
+                                        int xmin, int ymin, int xmax, int ymax) {
+    // 处理垂直线段
+    if (qFuzzyCompare(static_cast<double>(p1.x()), static_cast<double>(p2.x()))) {
+        if (edge == 0 || edge == 2) { // 左右边界
+            return QPoint(); // 无效交点
+        }
+        // 处理水平边界
+        double y = (edge == 1) ? ymax : ymin;
+        return QPoint(p1.x(), y);
+    }
+    
+    // 处理水平线段
+    if (qFuzzyCompare(static_cast<double>(p1.y()), static_cast<double>(p2.y()))) {
+        if (edge == 1 || edge == 3) { // 上下边界
+            return QPoint(); // 无效交点
+        }
+        // 处理垂直边界
+        double x = (edge == 0) ? xmin : xmax;
+        return QPoint(x, p1.y());
+    }
+    
+    double m = (p2.y() - p1.y()) / static_cast<double>(p2.x() - p1.x());
+    
+    double x, y;
+    
+    switch (edge) {
+    case 0: // left
+        x = xmin;
+        y = m * (xmin - p1.x()) + p1.y();
+        break;
+    case 1: // bottom
+        y = ymax;
+        x = (ymax - p1.y()) / m + p1.x();
+        break;
+    case 2: // right
+        x = xmax;
+        y = m * (xmax - p1.x()) + p1.y();
+        break;
+    case 3: // top
+        y = ymin;
+        x = (ymin - p1.y()) / m + p1.x();
+        break;
+    }
+    
+    // 检查交点是否在线段范围内
+    if (x < qMin(p1.x(), p2.x()) || x > qMax(p1.x(), p2.x()) ||
+        y < qMin(p1.y(), p2.y()) || y > qMax(p1.y(), p2.y())) {
+        return QPoint(); // 无效交点
+    }
+    
+    return QPoint(round(x), round(y));
+}
+
+void CanvasWidget::confirmClipping() {
+    if (!clipRect.isValid()) return;
+
+    QPainter painter(&canvasImage);
+    
+    // 转换为图像坐标系（考虑画布偏移）
+    QRect imageClipRect = QRect(
+        mapToCanvas(clipRect.topLeft() - m_canvasOffset),
+        mapToCanvas(clipRect.bottomRight() - m_canvasOffset)
+    ).normalized().intersected(canvasImage.rect());
+
+    // 清除外部区域（仅清除裁剪框外内容）
+    painter.setCompositionMode(QPainter::CompositionMode_Source);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(backgroundColor);
+    painter.setClipRegion(QRegion(canvasImage.rect()).subtracted(imageClipRect));
+    painter.drawRect(canvasImage.rect());
+
+    // 绘制裁剪后的图形到画布（使用原始坐标）
+    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    painter.setClipRect(imageClipRect);
+    
+    // 绘制线段
+    painter.setPen(QPen(penColor, penWidth));
+    for (const QLine& line : clippedLines) {
+        painter.drawLine(line);
+    }
+    
+    // 绘制多边形（使用图像坐标系）
+    for (const auto& poly : clippedPolygons) {
+        painter.drawPolygon(poly.constData(), poly.size());
+    }
+
+    // 保留原始图像内容
+    painter.drawImage(imageClipRect, canvasImage.copy(imageClipRect));
+
+    // 重置状态
+    clipRect = QRect();
+    clippedLines.clear();
+    clippedPolygons.clear();
+    allPolygons.clear();
+    
+    update();
+    emit clippingConfirmed();
+}
+
+void CanvasWidget::keyPressEvent(QKeyEvent *event) {
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) && !clipRect.isNull()) {
+        confirmClipping();
+        event->accept();
+    } else {
+        QWidget::keyPressEvent(event);
+    }
+    setFocus(); // 确保控件获得焦点
 }

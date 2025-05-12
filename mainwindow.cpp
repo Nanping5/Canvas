@@ -96,6 +96,18 @@ void MainWindow::setupUI() {
     QPushButton *saveButton = new QPushButton("💾 保存", this);
     connect(saveButton, &QPushButton::clicked, this, &MainWindow::saveCanvas);
 
+    // 添加旋转按钮
+    QPushButton *rotateButton = new QPushButton("旋转", this);
+    connect(rotateButton, &QPushButton::clicked, this, [this]() {
+        canvas->setTransformMode(CanvasWidget::Rotate);
+    });
+
+    // 添加缩放按钮
+    QPushButton *scaleButton = new QPushButton("缩放", this);
+    connect(scaleButton, &QPushButton::clicked, this, [this]() {
+        canvas->setTransformMode(CanvasWidget::Scale);
+    });
+
     // 添加到工具栏
     toolBar->addWidget(saveButton);
     toolBar->addWidget(colorButton);
@@ -107,7 +119,8 @@ void MainWindow::setupUI() {
     toolBar->addWidget(fillButton);
     toolBar->addWidget(clipCombo);
     toolBar->addWidget(selectButton);
-
+    toolBar->addWidget(rotateButton);
+    toolBar->addWidget(scaleButton);
 }
 
 void MainWindow::applyStyleSheet() {

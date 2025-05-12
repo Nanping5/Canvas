@@ -12,6 +12,7 @@ public:
     enum Connectivity { FourWay, EightWay };  // 枚举必须首先声明
     enum ClipAlgorithm { CohenSutherland, MidpointSubdivision };
     enum LineAlgorithm { Bresenham, Midpoint };
+    enum TransformMode { None, Rotate, Scale }; // 变换模式
     /**
      * 在Bezier曲线模式下，右键点击可以完成曲线绘制并将其保存到画布上
      */
@@ -33,6 +34,7 @@ public:
     QVector<QLine> getDrawnLines();  // 添加获取已绘制线段的函数声明
     int selectionMode = 0; // 0: normal, 1: select, 2: move
     bool saveImage(const QString &fileName, const char *format = nullptr);
+    void setTransformMode(TransformMode mode);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -99,6 +101,23 @@ private:
     QPoint deCasteljau(const QVector<QPoint> &points, double t);
     void drawArcPoint(QPainter &painter, QPoint center, int x, int y, int dashCounter, int dashLength);
     void clipPolygons(); // 多边形裁剪函数
+
+    TransformMode transformMode = None;
+    QPoint rotateCenter;
+    double rotateAngle = 0;
+    bool isRotating = false;
+    QImage preTransformImage; // 变换前的图像副本
+    double initialAngle = 0;
+    double currentAngle = 0;
+
+    QRect scaleRect; // 缩放选区
+    QImage scaleOriginal; // 原始选区图像
+    double scaleFactor = 1.0; // 当前缩放比例
+    bool isScaling = false; // 是否正在缩放
+
+    bool isAdjustingCurve = false; // 是否正在调整曲线
+    int selectedPointIndex = -1;   // 当前选中的控制点索引
+    QImage curvePreviewImage;      // 曲线预览临时图像
 
 signals:
     void imageModified();

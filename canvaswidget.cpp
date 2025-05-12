@@ -21,11 +21,23 @@ CanvasWidget::CanvasWidget(QWidget *parent) :
     isDraggingClipRect(false),
     isDraggingSelection(false),
     isSelecting(false),
-    isMoving(false)
+    isMoving(false),
+    transformMode(None),
+    isRotating(false),
+    rotateAngle(0),
+    initialAngle(0),
+    currentAngle(0),
+    scaleRect(QRect()),
+    scaleOriginal(QImage()),
+    scaleFactor(1.0),
+    isScaling(false),
+    isAdjustingCurve(false),
+    selectedPointIndex(-1),
+    curvePreviewImage(QImage())
 {
     setFocusPolicy(Qt::StrongFocus);
     canvasImage = QImage(800, 600, QImage::Format_ARGB32);
-    canvasImage.fill(Qt::white);
+    canvasImage.fill(Qt::transparent);
     originalCanvas = canvasImage.copy();
     setMouseTracking(true);
 }
@@ -190,6 +202,60 @@ void CanvasWidget::paintEvent(QPaintEvent *event) {
         }
         painter.drawPolygon(windowPoints.data(), windowPoints.size());
     }
+
+    // 绘制旋转预览
+    if (transformMode == Rotate && isRotating) {
+        painter.save();
+        painter.translate(m_zoomOffset);
+        painter.scale(m_zoomFactor, m_zoomFactor);
+        painter.translate(-m_canvasOffset);
+        
+        painter.translate(rotateCenter);
+        painter.rotate(rotateAngle + currentAngle);
+        painter.translate(-rotateCenter);
+        painter.drawImage(m_canvasOffset, preTransformImage);
+        
+        // 绘制旋转中心标记
+        painter.setPen(QPen(Qt::red, 2));
+        painter.drawEllipse(rotateCenter, 5, 5);
+        painter.restore();
+    }
+
+    // 绘制缩放选区
+    if (transformMode == Scale) {
+        painter.setPen(QPen(Qt::blue, 1, Qt::DashLine));
+        painter.drawRect(scaleRect);
+    }
+
+    // 绘制可调整的贝塞尔曲线
+    if (isAdjustingCurve && !controlPoints.isEmpty()) {
+        QPainter previewPainter(this);
+        previewPainter.setRenderHint(QPainter::Antialiasing);
+        
+        // 绘制原始图像
+        previewPainter.drawImage(m_canvasOffset, curvePreviewImage);
+        
+        // 绘制控制点和连线
+        QPen controlPen(Qt::blue, 2);
+        previewPainter.setPen(controlPen);
+        
+        // 绘制控制点连线
+        if (controlPoints.size() > 1) {
+            for (int i = 0; i < controlPoints.size()-1; ++i) {
+                previewPainter.drawLine(controlPoints[i], controlPoints[i+1]);
+            }
+        }
+        
+        // 绘制控制点
+        for (const QPoint &p : controlPoints) {
+            previewPainter.drawEllipse(p, 5, 5);
+        }
+        
+        // 绘制当前曲线
+        QPen curvePen(penColor, penWidth, lineStyle);
+        previewPainter.setPen(curvePen);
+        drawBezierCurve(previewPainter);
+    }
 }
 
 QPointF CanvasWidget::mapToImage(const QPoint& pos) const {
@@ -211,6 +277,76 @@ QPoint CanvasWidget::mapFromCanvas(const QPoint& canvasPos) const {
 }
 
 void CanvasWidget::mousePressEvent(QMouseEvent *event) {
+    if (isAdjustingCurve) {
+        if (event->button() == Qt::LeftButton) {
+            QPoint clickPos = mapToImage(event->pos()).toPoint();
+            int minDist = 10;
+            for (int i = 0; i < controlPoints.size(); ++i) {
+                if (QLineF(clickPos, controlPoints[i]).length() < minDist) {
+                    selectedPointIndex = i;
+                    break;
+                }
+            }
+        } else if (event->button() == Qt::RightButton) {
+            // 右键结束调整并确认
+            QPainter painter(&canvasImage);
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setPen(QPen(penColor, penWidth, lineStyle));
+            drawBezierCurve(painter);
+            
+            isAdjustingCurve = false;
+            controlPoints.clear();
+            update();
+            event->accept();
+        }
+        return;
+    }
+    
+    if (drawingMode == 7) { 
+        if (event->button() == Qt::LeftButton) {
+            QPointF imagePos = mapToImage(event->pos());
+            controlPoints.append(imagePos.toPoint());
+            update();
+            event->accept();
+        }
+        return;
+    }
+
+    // 其他模式处理（放在后面）
+    if (transformMode == Scale) {
+        if (event->button() == Qt::LeftButton) {
+            QPointF imagePos = mapToImage(event->pos());
+            startPoint = imagePos.toPoint();
+            scaleRect = QRect(startPoint, QSize(0,0));
+            isScaling = true;
+            scaleOriginal = QImage(); // 重置原始图像
+        } else if (event->button() == Qt::RightButton) {
+            // 右键退出缩放模式
+            transformMode = None;
+            scaleRect = QRect();
+            update();
+        }
+        return;
+    }
+    if (transformMode == Rotate) {
+        if (event->button() == Qt::LeftButton) {
+            rotateCenter = mapToImage(event->pos()).toPoint();
+            isRotating = true;
+            preTransformImage = canvasImage.copy();
+            
+            // 计算初始角度
+            QPoint initPos = mapToImage(event->pos()).toPoint();
+            QPoint delta = initPos - rotateCenter;
+            initialAngle = qRadiansToDegrees(atan2(delta.y(), delta.x()));
+            currentAngle = 0;  // 重置当前旋转角度
+        } else if (event->button() == Qt::RightButton) {
+            // 右键结束旋转
+            isRotating = false;
+            transformMode = None;
+            update();
+        }
+        return;
+    }
     if (event->button() == Qt::MiddleButton) {
         m_lastDragPos = event->pos();
         setCursor(Qt::ClosedHandCursor);
@@ -303,6 +439,17 @@ void CanvasWidget::mousePressEvent(QMouseEvent *event) {
             QPointF imagePos = mapToImage(event->pos());
             controlPoints.append(imagePos.toPoint());
             update();
+        } else if (event->button() == Qt::RightButton) {
+            if (controlPoints.size() >= 2) {
+                // 右键确认进入调整模式
+                isAdjustingCurve = true;
+                curvePreviewImage = canvasImage.copy(); // 保存当前画布状态
+                update();
+            } else {
+                // 控制点不足时清空重新开始
+                controlPoints.clear();
+                update();
+            }
         }
         QPointF imagePos = mapToImage(event->pos());
         startPoint = imagePos.toPoint();
@@ -330,6 +477,35 @@ void CanvasWidget::resizeEvent(QResizeEvent *event) {
 }
 
 void CanvasWidget::mouseMoveEvent(QMouseEvent *event) {
+    if (isAdjustingCurve && selectedPointIndex != -1) {
+        QPoint newPos = mapToImage(event->pos()).toPoint();
+        controlPoints[selectedPointIndex] = newPos;
+        update();
+        return;
+    }
+    
+    if (transformMode == Scale && isScaling) {
+        QPointF imagePos = mapToImage(event->pos());
+        currentPoint = imagePos.toPoint();
+        scaleRect = QRect(qMin(startPoint.x(), currentPoint.x()),
+                         qMin(startPoint.y(), currentPoint.y()),
+                         abs(startPoint.x() - currentPoint.x()),
+                         abs(startPoint.y() - currentPoint.y()))
+                   .intersected(canvasImage.rect());
+        update();
+        return;
+    }
+    if (transformMode == Rotate && isRotating) {
+        QPoint currentPos = mapToImage(event->pos()).toPoint();
+        QPoint delta = currentPos - rotateCenter;
+        
+        // 计算相对旋转角度
+        double newAngle = qRadiansToDegrees(atan2(delta.y(), delta.x()));
+        currentAngle = newAngle - initialAngle;
+        
+        update();
+        return;
+    }
     if (event->buttons() & Qt::MiddleButton) {
         QPoint delta = event->pos() - m_lastDragPos;
         m_zoomOffset += delta;
@@ -405,6 +581,32 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
+    if (transformMode == Scale && event->button() == Qt::LeftButton) {
+        isScaling = false;
+        if (scaleRect.isValid()) {
+            // 保存原始选区图像
+            scaleOriginal = canvasImage.copy(scaleRect);
+        }
+        update();
+        return;
+    }
+    if (transformMode == Rotate && event->button() == Qt::LeftButton) {
+        isRotating = false;
+        
+        // 应用旋转并累积角度
+        QPainter painter(&canvasImage);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.translate(rotateCenter);
+        painter.rotate(rotateAngle + currentAngle);  // 应用累积角度
+        painter.translate(-rotateCenter);
+        painter.drawImage(0, 0, preTransformImage);
+        
+        // 保存状态
+        rotateAngle += currentAngle;  // 累积旋转角度
+        preTransformImage = canvasImage.copy();
+        update();
+        return;
+    }
     if (event->button() == Qt::MiddleButton) {
         setCursor(Qt::ArrowCursor);
         event->accept();
@@ -517,6 +719,10 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
             controlPoints.clear();
             update();
         }
+    }
+
+    if (event->button() == Qt::LeftButton && isAdjustingCurve) {
+        selectedPointIndex = -1; // 释放选中的点
     }
 }
 
@@ -659,7 +865,37 @@ void CanvasWidget::drawArcPoint(QPainter &painter, QPoint center,
 }
 
 void CanvasWidget::wheelEvent(QWheelEvent *event) {
-    if (event->modifiers() & Qt::ControlModifier) {
+    if (transformMode == Scale && scaleOriginal.size().isValid()) {
+        // 计算缩放增量
+        double delta = event->angleDelta().y() > 0 ? 0.1 : -0.1;
+        scaleFactor = qMax(0.1, scaleFactor + delta);
+
+        // 生成缩放后的图像
+        QImage scaled = scaleOriginal.scaled(
+            scaleOriginal.size() * scaleFactor, 
+            Qt::KeepAspectRatio, 
+            Qt::SmoothTransformation
+        );
+
+        // 计算绘制位置（居中显示）
+        QPoint drawPos = scaleRect.center() - QPoint(scaled.width()/2, scaled.height()/2);
+
+        // 应用缩放
+        QPainter painter(&canvasImage);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        
+        // 保存原始选区外内容
+        QImage originalBackground = canvasImage.copy();
+        
+        // 清除选区内容为背景色
+        painter.fillRect(scaleRect, backgroundColor);
+        
+        // 绘制缩放后的图像（保持居中）
+        painter.drawImage(drawPos, scaled);
+         
+        update();
+        event->accept();
+    } else if (event->modifiers() & Qt::ControlModifier) {
         // 获取鼠标位置
         QPointF mousePos = event->position();
 
@@ -923,32 +1159,32 @@ void CanvasWidget::setSelectionMode(bool enabled) {
 
 // 实现de Casteljau算法
 QPoint CanvasWidget::deCasteljau(const QVector<QPoint> &points, double t) {
-    if (points.size() == 1) {
-        return points[0];
+    // 正确实现de Casteljau算法
+    QVector<QPoint> temp = points;
+    while (temp.size() > 1) {
+        QVector<QPoint> newLevel;
+        for (int i = 0; i < temp.size() - 1; ++i) {
+            int x = (1 - t) * temp[i].x() + t * temp[i + 1].x();
+            int y = (1 - t) * temp[i].y() + t * temp[i + 1].y();
+            newLevel.append(QPoint(x, y));
+        }
+        temp = newLevel;
     }
-    
-    QVector<QPoint> newPoints;
-    for (int i = 1; i < points.size(); ++i) {
-        QPoint p = (1 - t) * points[i-1] + t * points[i];
-        newPoints.append(p);
-    }
-    
-    return deCasteljau(newPoints, t);
+    return temp.first();
 }
 
 // 绘制Bezier曲线
 void CanvasWidget::drawBezierCurve(QPainter &painter) {
-    painter.setPen(QPen(penColor, penWidth, lineStyle));
-    
-    const int steps = 100; // 曲线采样点数
-    QPoint prevPoint = controlPoints[0];
-    
-    for (int i = 1; i <= steps; ++i) {
-        double t = static_cast<double>(i) / steps;
-        QPoint currentPoint = deCasteljau(controlPoints, t);
-        painter.drawLine(prevPoint, currentPoint);
-        prevPoint = currentPoint;
+    if (controlPoints.size() < 2) return;
+
+    // 使用de Casteljau算法
+    QVector<QPoint> points;
+    const double step = 0.01; // 更精细的步长
+    for (double t = 0; t <= 1.0; t += step) {
+        points.append(deCasteljau(controlPoints, t));
     }
+
+    painter.drawPolyline(points.data(), points.size());
 }
 
 // 实现保存函数
@@ -1137,11 +1373,64 @@ void CanvasWidget::confirmClipping() {
 }
 
 void CanvasWidget::keyPressEvent(QKeyEvent *event) {
+    // 优先处理裁剪确认
     if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) && !clipRect.isNull()) {
         confirmClipping();
         event->accept();
-    } else {
-        QWidget::keyPressEvent(event);
+        return;
     }
+
+    // 处理贝塞尔曲线模式
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        if (drawingMode == 7) {  // 仅在贝塞尔曲线模式下处理
+            if (!isAdjustingCurve && controlPoints.size() >= 2) {
+                // 进入调整模式
+                isAdjustingCurve = true;
+                curvePreviewImage = canvasImage.copy();
+                update();
+                event->accept();
+            } else if (isAdjustingCurve) {
+                // 确认最终曲线
+                QPainter painter(&canvasImage);
+                painter.setRenderHint(QPainter::Antialiasing);
+                painter.setPen(QPen(penColor, penWidth, lineStyle));
+                drawBezierCurve(painter);
+                
+                // 重置状态
+                isAdjustingCurve = false;
+                controlPoints.clear();
+                update();
+                event->accept();
+            }
+            return;
+        }
+    }
+
+    // 处理ESC键（仅影响调整模式）
+    if (event->key() == Qt::Key_Escape) {
+        if (isAdjustingCurve) {
+            // 取消曲线调整
+            isAdjustingCurve = false;
+            controlPoints.clear();
+            update();
+            event->accept();
+            return;
+        }
+        // 可以添加其他ESC键功能
+    }
+
+    // 其他按键处理
+    QWidget::keyPressEvent(event);
     setFocus(); // 确保控件获得焦点
+}
+
+// 新增函数：设置变换模式
+void CanvasWidget::setTransformMode(TransformMode mode) {
+    transformMode = mode;
+    selectionMode = 0; // 退出选择模式
+    drawingMode = -1;  // 退出其他绘制模式
+    if (mode != Scale) {
+        scaleRect = QRect(); // 退出时清除缩放选区
+    }
+    update();
 }

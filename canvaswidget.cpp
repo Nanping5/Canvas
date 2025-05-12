@@ -1111,6 +1111,10 @@ QVector<QLine> CanvasWidget::getDrawnLines() {
 }
 
 void CanvasWidget::drawMidpointLine(QPainter &painter, QPoint p1, QPoint p2) {
+    QPen currentPen = painter.pen();
+    currentPen.setWidth(penWidth);  // 应用当前线宽
+    painter.setPen(currentPen);
+    
     int x1 = p1.x(), y1 = p1.y();
     int x2 = p2.x(), y2 = p2.y();
     int dx = abs(x2 - x1), dy = abs(y2 - y1);

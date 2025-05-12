@@ -86,14 +86,14 @@ void MainWindow::setupUI() {
     });
 
     // 添加选择按钮
-    QPushButton *selectButton = new QPushButton("选中", this);
+    QPushButton *selectButton = new QPushButton("平移", this);
     selectButton->setCheckable(true);
     connect(selectButton, &QPushButton::toggled, this, [this](bool checked) {
         canvas->setSelectionMode(checked);
     });
 
     // 添加保存按钮
-    QPushButton *saveButton = new QPushButton("💾 保存", this);
+    QPushButton *saveButton = new QPushButton("保存", this);
     connect(saveButton, &QPushButton::clicked, this, &MainWindow::saveCanvas);
 
     // 添加旋转按钮

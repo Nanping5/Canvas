@@ -1,3 +1,5 @@
+//@author Nanping5
+//@date 2025/3/24
 #include "canvaswidget.h"
 #include <QPainterPath>
 #include<cmath>

@@ -1,3 +1,5 @@
+//@author Nanping5
+//@date 2025/3/24
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 

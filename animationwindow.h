@@ -1,3 +1,5 @@
+//@author Nanping5
+//@date 2025/3/24
 #ifndef ANIMATIONWINDOW_H
 #define ANIMATIONWINDOW_H
 

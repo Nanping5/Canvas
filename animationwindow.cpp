@@ -1,3 +1,5 @@
+//@author Nanping5
+//@date 2025/3/24
 #include "animationwindow.h"
 #include <QVBoxLayout>  // 添加垂直布局头文件
 

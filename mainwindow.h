@@ -6,6 +6,7 @@
 #include <QPushButton>
 #include <QComboBox>
 #include "canvaswidget.h"
+#include "animationwindow.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -31,6 +32,8 @@ private:
     QComboBox *modeComboBox;
     QComboBox *lineStyleComboBox;
     QPushButton *eraserButton;
+    QPushButton *playButton;
+    AnimationWindow *animationWindow = nullptr;  // 新增成员变量
 
     void setupUI();  // 初始化 UI
     void applyStyleSheet();  // 设置样式

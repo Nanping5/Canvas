@@ -4,6 +4,7 @@
 #include <QVBoxLayout>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QHBoxLayout>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent) {
@@ -11,16 +12,26 @@ MainWindow::MainWindow(QWidget *parent)
     applyStyleSheet();
 }
 
-MainWindow::~MainWindow() {}
+MainWindow::~MainWindow() {
+    if (animationWindow && animationWindow->isVisible()) {
+        animationWindow->deleteLater();  // 更安全的删除方式
+    }
+}
 
 void MainWindow::setupUI() {
     // 设置窗口
     setWindowTitle("Canvas");
     resize(1440,960);
 
+    // 创建主界面布局
+    QWidget *centralWidget = new QWidget(this);
+    QHBoxLayout *controlLayout = new QHBoxLayout; // 新增控制按钮布局
+    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
+
     // 创建画布
     canvas = new CanvasWidget(this);
-    setCentralWidget(canvas);
+    mainLayout->addLayout(controlLayout); // 将控制按钮布局放在画布上方
+    mainLayout->addWidget(canvas);
 
     // 创建工具栏
     QToolBar *toolBar = new QToolBar("工具栏", this);
@@ -108,7 +119,11 @@ void MainWindow::setupUI() {
         canvas->setTransformMode(CanvasWidget::Scale);
     });
 
-    // 添加到工具栏
+    // 创建播放按钮
+    playButton = new QPushButton("播放", this);  // 使用更直观的文本
+    playButton->setToolTip("打开动画演示窗口");
+
+    // 在工具栏添加按钮
     toolBar->addWidget(saveButton);
     toolBar->addWidget(colorButton);
     toolBar->addWidget(clearButton);
@@ -121,12 +136,37 @@ void MainWindow::setupUI() {
     toolBar->addWidget(selectButton);
     toolBar->addWidget(rotateButton);
     toolBar->addWidget(scaleButton);
+    toolBar->addSeparator();
+    toolBar->addWidget(playButton);
+
+    setCentralWidget(centralWidget);
+
+    // 连接播放按钮信号
+    connect(playButton, &QPushButton::clicked, this, [this]() {
+        if (!animationWindow) {
+            animationWindow = new AnimationWindow();
+            animationWindow->setAttribute(Qt::WA_DeleteOnClose); // 确保窗口关闭时删除
+            
+            // 窗口关闭时自动清理指针
+            connect(animationWindow, &AnimationWindow::destroyed, this, [this]() {
+                animationWindow = nullptr;
+            });
+            
+            // 返回主界面逻辑
+            connect(animationWindow, &AnimationWindow::backToMain, this, [this]() {
+                this->show();
+                animationWindow->deleteLater();
+            });
+        }
+        animationWindow->show();
+        this->hide();
+    });
 }
 
 void MainWindow::applyStyleSheet() {
     this->setStyleSheet(R"(
         QMainWindow {
-            background-color: #2E3440;
+            background-color: #2E3440;  // 确保背景色不是黑色
         }
 
         QToolBar {
@@ -191,6 +231,16 @@ void MainWindow::applyStyleSheet() {
             background-color: #88C0D0;
             border-color: #81A1C1;
             color: white;
+        }
+
+        QPushButton[text="播放"] {
+            background-color: #A3BE8C;
+            border: 2px solid #8FBCBB;
+            color: #2E3440;
+            padding: 8px 16px;
+        }
+        QPushButton[text="播放"]:hover {
+            background-color: #8FBCBB;
         }
     )");
 }

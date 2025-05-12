@@ -442,7 +442,13 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
         if (!selectionRect.isNull()) {
             // 保存选择区域的图像
             selectionImage = canvasImage.copy(selectionRect);
-            // 保存原始画布状态
+            
+            // 新增代码：清除原位置的选区内容
+            QPainter painter(&canvasImage);
+            painter.setCompositionMode(QPainter::CompositionMode_Source);
+            painter.fillRect(selectionRect, backgroundColor);
+            
+            // 保存原始画布状态（此时已清除选区内容）
             originalCanvas = canvasImage.copy();
         }
         update();

@@ -1,5 +1,3 @@
-//@author Nanping5
-//@date 2025/3/24
 #include "mainwindow.h"
 #include <QColorDialog>
 #include <QInputDialog>
@@ -7,11 +5,13 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QHBoxLayout>
+#include <QDebug>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent) {
     setupUI();
     applyStyleSheet();
+    canvas->setMouseTransparent(false);  // 确保主窗口正常响应
 }
 
 MainWindow::~MainWindow() {
@@ -122,7 +122,7 @@ void MainWindow::setupUI() {
     });
 
     // 创建播放按钮
-    playButton = new QPushButton("播放", this);  // 使用更直观的文本
+    playButton = new QPushButton("演示", this);  // 使用更直观的文本
     playButton->setToolTip("打开动画演示窗口");
 
     // 在工具栏添加按钮
@@ -235,13 +235,13 @@ void MainWindow::applyStyleSheet() {
             color: white;
         }
 
-        QPushButton[text="播放"] {
+        QPushButton[text="演示"] {
             background-color: #A3BE8C;
             border: 2px solid #8FBCBB;
             color: #2E3440;
             padding: 8px 16px;
         }
-        QPushButton[text="播放"]:hover {
+        QPushButton[text="演示"]:hover {
             background-color: #8FBCBB;
         }
     )");

@@ -1,5 +1,3 @@
-//@author Nanping5
-//@date 2025/3/24
 #ifndef CANVASWIDGET_H
 #define CANVASWIDGET_H
 
@@ -37,6 +35,12 @@ public:
     int selectionMode = 0; // 0: normal, 1: select, 2: move
     bool saveImage(const QString &fileName, const char *format = nullptr);
     void setTransformMode(TransformMode mode);
+    void drawLine(const QPoint &start, const QPoint &end, const QColor &color, int width);
+    void setMouseTransparent(bool enable);
+    LineAlgorithm getLineAlgorithm() const { return lineAlgorithm; }
+    QImage& getCanvasImage() { return canvasImage; }
+    void drawCircle(const QPoint &center, int radius, const QColor &color, int width);
+    void setBackgroundColor(const QColor& color); // 仅声明
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -56,7 +60,7 @@ private:
     QPoint startPoint, endPoint, currentPoint;
     int drawingMode;  // 0:自由绘制,1:直线,2:圆,3:橡皮擦,4:多边形,5:填充,6:裁剪,7:选择
     Qt::PenStyle lineStyle = Qt::SolidLine;
-    QColor backgroundColor;
+    QColor backgroundColor = Qt::white; // 默认白色背景
     double m_zoomFactor = 1.0;
     QPointF m_zoomOffset;
     QPoint m_lastDragPos;

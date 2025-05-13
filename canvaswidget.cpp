@@ -1,5 +1,3 @@
-//@author Nanping5
-//@date 2025/3/24
 #include "canvaswidget.h"
 #include <QPainterPath>
 #include<cmath>
@@ -53,7 +51,7 @@ void CanvasWidget::setPenWidth(int width) {
 }
 
 void CanvasWidget::clearCanvas() {
-    canvasImage.fill(Qt::white);
+    canvasImage.fill(Qt::transparent); // 仅清除绘制内容
     update();
 }
 
@@ -77,7 +75,9 @@ void CanvasWidget::paintEvent(QPaintEvent *event) {
     painter.scale(m_zoomFactor, m_zoomFactor);
     painter.translate(-m_canvasOffset);
 
-    // 绘制画布
+    // 1. 绘制背景色
+    painter.fillRect(rect(), backgroundColor);
+    // 2. 绘制画布内容
     painter.drawImage(m_canvasOffset, canvasImage);
 
     // 如果正在移动，绘制预览
@@ -728,40 +728,27 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *event) {
     }
 }
 
-void CanvasWidget::drawBresenhamLine(QPainter &painter, QPoint p1, QPoint p2) {
-    // 使用原始画笔宽度
-    QPen pen(penColor, penWidth, Qt::SolidLine);
-    painter.setPen(pen);
-
-    int x1 = p1.x(), y1 = p1.y();
-    int x2 = p2.x(), y2 = p2.y();
-    int dx = abs(x2 - x1), dy = abs(y2 - y1);
-    int sx = (x1 < x2) ? 1 : -1, sy = (y1 < y2) ? 1 : -1;
+void CanvasWidget::drawBresenhamLine(QPainter &painter, QPoint start, QPoint end) {
+    int x0 = start.x();
+    int y0 = start.y();
+    int x1 = end.x();
+    int y1 = end.y();
+    
+    int dx = abs(x1 - x0);
+    int dy = abs(y1 - y0);
+    int sx = x0 < x1 ? 1 : -1;
+    int sy = y0 < y1 ? 1 : -1;
     int err = dx - dy;
 
-    int dashCounter = 0;
-    bool drawPixel = true;
-    int dashLength = (lineStyle == Qt::DotLine) ? 2 : 5;  // 点线间隔更短
-
-    while (true) {
-        if(lineStyle != Qt::SolidLine) {
-            if(dashCounter % (dashLength*2) < dashLength) {
-                drawPixel = true;
-                if(lineStyle == Qt::DotLine) drawPixel = (dashCounter % 4 < 2);  // 点线模式
-            } else {
-                drawPixel = false;
-            }
-        }
-
-        if(drawPixel) {
-            painter.drawPoint(x1, y1);
-        }
-        dashCounter++;
-
-        if (x1 == x2 && y1 == y2) break;
-        int e2 = err * 2;
-        if (e2 > -dy) { err -= dy; x1 += sx; }
-        if (e2 < dx) { err += dx; y1 += sy; }
+    QPen pen = painter.pen();
+    QColor color = pen.color();
+    
+    while (x0 != x1 || y0 != y1) {
+        painter.setPen(color);
+        painter.drawPoint(QPoint(x0, y0));
+        int e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x0 += sx; }
+        if (e2 < dx) { err += dx; y0 += sy; }
     }
 }
 
@@ -1438,5 +1425,62 @@ void CanvasWidget::setTransformMode(TransformMode mode) {
     if (mode != Scale) {
         scaleRect = QRect(); // 退出时清除缩放选区
     }
+    update();
+}
+
+void CanvasWidget::drawLine(const QPoint &start, const QPoint &end, const QColor &color, int width) {
+    QPainter painter(&canvasImage);
+    painter.setPen(QPen(color, width, lineStyle));
+    
+    // 根据当前算法设置进行绘制
+    switch (lineAlgorithm) {
+    case Bresenham:
+        drawBresenhamLine(painter, start, end);
+        break;
+    case Midpoint:
+        drawMidpointLine(painter, start, end);
+        break;
+    }
+    
+    update();
+}
+
+void CanvasWidget::setMouseTransparent(bool enable) {
+    setAttribute(Qt::WA_TransparentForMouseEvents, enable);
+    setMouseTracking(!enable);  // 仅在需要时启用鼠标追踪
+}
+
+void CanvasWidget::drawCircle(const QPoint &center, int radius, const QColor &color, int width) {
+    QPainter painter(&canvasImage);
+    painter.setPen(QPen(color, width));
+    
+    int x = 0;
+    int y = radius;
+    int d = 3 - 2 * radius;
+
+    while (x <= y) {
+        // 绘制八个对称点
+        painter.drawPoint(center.x() + x, center.y() + y);
+        painter.drawPoint(center.x() - x, center.y() + y);
+        painter.drawPoint(center.x() + x, center.y() - y);
+        painter.drawPoint(center.x() - x, center.y() - y);
+        painter.drawPoint(center.x() + y, center.y() + x);
+        painter.drawPoint(center.x() - y, center.y() + x);
+        painter.drawPoint(center.x() + y, center.y() - x);
+        painter.drawPoint(center.x() - y, center.y() - x);
+
+        if (d < 0) {
+            d += 4 * x + 6;
+        } else {
+            d += 4 * (x - y) + 10;
+            y--;
+        }
+        x++;
+    }
+    update();
+}
+
+void CanvasWidget::setBackgroundColor(const QColor& color) {
+    backgroundColor = color;
     update();
 }
